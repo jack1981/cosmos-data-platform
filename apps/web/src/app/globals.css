@@ -15,6 +15,15 @@
   --color-warn: #db8a34;
   --color-warn-strong: #91500d;
   --color-danger: #c8524b;
+
+  --flow-shell-bg: linear-gradient(160deg, #f5eff7 0%, #f1eef5 62%, #f6f4fa 100%);
+  --flow-shell-border: #e1d7e8;
+  --flow-panel-border: #e4dde9;
+  --flow-node-border: #e9e3ef;
+  --flow-node-soft: #f9f6fc;
+  --flow-orange: #ee7d35;
+  --flow-orange-soft: #f8b27a;
+  --flow-dot: rgba(149, 122, 172, 0.2);
 }
 
 * {
@@ -49,4 +58,9 @@ h6 {
 a {
   color: inherit;
   text-decoration: none;
+}
+
+.pipeline-canvas-grid {
+  background-image: radial-gradient(circle, var(--flow-dot) 1.15px, transparent 1.15px);
+  background-size: 18px 18px;
 }
