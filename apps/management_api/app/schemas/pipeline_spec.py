@@ -56,6 +56,7 @@ class IOConfig(BaseModel):
 
 
 class RuntimeConfig(BaseModel):
+    ray_mode: Literal["local", "k8s"] | None = None
     ray_address: str | None = None
     autoscaling: dict[str, Any] = Field(default_factory=dict)
     retry_policy: dict[str, Any] = Field(default_factory=dict)

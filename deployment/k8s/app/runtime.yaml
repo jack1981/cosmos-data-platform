@@ -1,0 +1,42 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: runtime
+  labels:
+    app: runtime
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: runtime
+  template:
+    metadata:
+      labels:
+        app: runtime
+    spec:
+      containers:
+        - name: runtime
+          image: cosmos-xenna/runtime:local
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - configMapRef:
+                name: cosmos-config
+            - secretRef:
+                name: cosmos-secret
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            exec:
+              command: ["python", "deployment/scripts/smoke_test.py", "--component", "runtime"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          livenessProbe:
+            exec:
+              command: ["python", "deployment/scripts/smoke_test.py", "--component", "runtime"]
+            initialDelaySeconds: 30
+            periodSeconds: 20

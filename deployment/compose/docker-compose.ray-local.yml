@@ -1,0 +1,40 @@
+services:
+  ray-head:
+    image: rayproject/ray:2.46.0-py311
+    container_name: xenna-ray-head
+    command: >-
+      ray start --head --port=6379 --dashboard-host=0.0.0.0 --dashboard-port=8265 --ray-client-server-port=10001 --block
+    environment:
+      RAY_DISABLE_DOCKER_CPU_WARNING: "1"
+    ports:
+      - "8265:8265"
+      - "10001:10001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import ray; ray.init(address='ray://127.0.0.1:10001', ignore_reinit_error=True, log_to_driver=False); ray.shutdown()\""]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+
+  ray-worker:
+    image: rayproject/ray:2.46.0-py311
+    container_name: xenna-ray-worker
+    command: >-
+      ray start --address=ray-head:6379 --block
+    environment:
+      RAY_DISABLE_DOCKER_CPU_WARNING: "1"
+    depends_on:
+      ray-head:
+        condition: service_healthy
+
+  api:
+    environment:
+      RAY_MODE: local
+      RAY_ADDRESS: ray://ray-head:10001
+
+  runtime:
+    environment:
+      RAY_MODE: local
+      RAY_ADDRESS: ray://ray-head:10001
+    depends_on:
+      ray-head:
+        condition: service_healthy

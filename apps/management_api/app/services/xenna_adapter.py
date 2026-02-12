@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Any, Callable
 
 from app.schemas.pipeline_spec import PipelineSpecDocument
@@ -39,6 +40,12 @@ def try_run_with_xenna(
         return_last_stage_outputs=True,
         logging_interval_s=30.0,
     )
+
+    if spec.runtime.ray_mode:
+        os.environ["RAY_MODE"] = spec.runtime.ray_mode
+    if spec.runtime.ray_address:
+        os.environ["RAY_ADDRESS"] = spec.runtime.ray_address
+
     pipeline_spec = pipelines_v1.PipelineSpec(
         input_data=input_data,
         stages=xenna_stages,

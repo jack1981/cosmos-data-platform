@@ -1,0 +1,43 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-worker
+  labels:
+    app: ray-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ray-worker
+  template:
+    metadata:
+      labels:
+        app: ray-worker
+    spec:
+      containers:
+        - name: ray-worker
+          image: rayproject/ray:2.46.0-py311
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-lc"]
+          args:
+            - >-
+              ray start
+              --address=ray-head:6379
+              --block
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          readinessProbe:
+            exec:
+              command: ["bash", "-lc", "ray status --address=ray-head:6379 >/dev/null"]
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          livenessProbe:
+            exec:
+              command: ["bash", "-lc", "ray status --address=ray-head:6379 >/dev/null"]
+            initialDelaySeconds: 30
+            periodSeconds: 20

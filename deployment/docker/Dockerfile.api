@@ -1,0 +1,51 @@
+FROM python:3.11-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:${PATH}"
+
+COPY apps/management_api/requirements.txt /tmp/requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r /tmp/requirements.txt
+
+
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/opt/venv/bin:${PATH}" \
+    PYTHONPATH=/app
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends libpq5 && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system --gid 10001 appuser && \
+    useradd --system --uid 10001 --gid 10001 --create-home --home-dir /home/appuser appuser
+
+WORKDIR /app
+
+COPY --from=builder /opt/venv /opt/venv
+COPY apps/management_api /app/apps/management_api
+COPY cosmos_xenna /app/cosmos_xenna
+COPY deployment/scripts /app/deployment/scripts
+
+WORKDIR /app/apps/management_api
+RUN chmod +x /app/apps/management_api/entrypoint.sh && \
+    chown -R appuser:appuser /app /opt/venv
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=20s --timeout=5s --start-period=20s --retries=5 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4).read()" || exit 1
+
+USER appuser
+
+CMD ["/app/apps/management_api/entrypoint.sh"]

@@ -16,6 +16,7 @@
 import os
 
 import loguru
+import ray
 import ray.runtime_context
 from loguru import logger
 
@@ -83,11 +84,37 @@ def init_or_connect_to_cluster(
         logger.__class__, serializer=logger_custom_serializer, deserializer=logger_custom_deserializer
     )
 
-    context = ray.init(
-        include_dashboard=True,
-        ignore_reinit_error=True,
-        log_to_driver=log_to_driver,
-        _metrics_export_port=ray_metrics_port,
-    )
+    ray_mode = os.getenv("RAY_MODE", "local").strip().lower()
+    if ray_mode not in {"local", "k8s"}:
+        raise ValueError(f"Unsupported RAY_MODE={ray_mode!r}. Expected one of: local, k8s")
+
+    ray_address = os.getenv("RAY_ADDRESS", "").strip()
+    connect_address: str | None = None
+    if ray_address:
+        if ray_address == "auto":
+            connect_address = "auto" if ray_mode == "k8s" else None
+        elif ray_address.lower() != "none":
+            connect_address = ray_address
+    elif ray_mode == "k8s":
+        # Default service DNS for in-cluster deployments.
+        connect_address = "ray://ray-head:10001"
+
+    if ray.is_initialized():
+        context = ray.get_runtime_context()
+        logger.info(f"Ray runtime already initialized (mode={ray_mode}, address={connect_address or 'local-new-cluster'})")
+        return context
+
+    init_kwargs: dict[str, object] = {
+        "ignore_reinit_error": True,
+        "log_to_driver": log_to_driver,
+        "_metrics_export_port": ray_metrics_port,
+    }
+    if connect_address:
+        init_kwargs["address"] = connect_address
+    else:
+        init_kwargs["include_dashboard"] = True
+
+    context = ray.init(**init_kwargs)
+    logger.info(f"Initialized Ray (mode={ray_mode}, address={connect_address or 'local-new-cluster'})")
     logger.info(f"Ray dashboard url: {context.dashboard_url}")
     return context

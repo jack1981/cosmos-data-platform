@@ -1,3 +1,5 @@
+name: cosmos-xenna
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -16,16 +18,24 @@ services:
       timeout: 5s
       retries: 20
 
-  management_api:
+  redis:
+    image: redis:7-alpine
+    container_name: xenna-redis
+    ports:
+      - "6379:6379"
+
+  api:
     build:
       context: ../..
-      dockerfile: deploy/docker/management_api.Dockerfile
-    container_name: xenna-management-api
+      dockerfile: deployment/docker/Dockerfile.api
+    image: ${API_IMAGE:-cosmos-xenna/api:local}
+    container_name: xenna-api
     environment:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-xenna}:${POSTGRES_PASSWORD:-xenna}@postgres:5432/${POSTGRES_DB:-xenna_management}
       SECRET_KEY: ${SECRET_KEY:-replace-with-random-secret}
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-cuWRV_El44bUKXOBlIqg1uDM7mtgXAQQizK1tvkKF1c=}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      RAY_MODE: ${RAY_MODE:-local}
       RAY_ADDRESS: ${RAY_ADDRESS:-auto}
       DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-admin@xenna.local}
       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-Admin123!}
@@ -42,14 +52,31 @@ services:
   web:
     build:
       context: ../..
-      dockerfile: deploy/docker/web.Dockerfile
+      dockerfile: deployment/docker/Dockerfile.web
+    image: ${WEB_IMAGE:-cosmos-xenna/web:local}
     container_name: xenna-web
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
     depends_on:
-      - management_api
+      api:
+        condition: service_healthy
     ports:
       - "3000:3000"
+
+  runtime:
+    build:
+      context: ../..
+      dockerfile: deployment/docker/Dockerfile.runtime
+    image: ${RUNTIME_IMAGE:-cosmos-xenna/runtime:local}
+    container_name: xenna-runtime
+    environment:
+      RAY_MODE: ${RAY_MODE:-local}
+      RAY_ADDRESS: ${RAY_ADDRESS:-auto}
+      RUNTIME_HEARTBEAT_SECONDS: ${RUNTIME_HEARTBEAT_SECONDS:-30}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
   postgres_data:

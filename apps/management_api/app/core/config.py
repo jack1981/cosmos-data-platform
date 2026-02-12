@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     refresh_token_expire_minutes: int = 60 * 24 * 7
 
     database_url: str = "postgresql+psycopg2://xenna:xenna@postgres:5432/xenna_management"
+    ray_mode: Literal["local", "k8s"] = "local"
     ray_address: str = "auto"
     runner_max_workers: int = 4
 

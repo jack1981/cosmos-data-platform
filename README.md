@@ -628,47 +628,129 @@ license terms of these open source projects before use.
 
 NVIDIA Cosmos source code is released under the [Apache 2 License](https://www.apache.org/licenses/LICENSE-2.0).
 
-## Management Plane (FastAPI + Next.js)
+## Management Plane (FastAPI + Next.js + Runtime)
 
-A Dockerized management plane is available alongside the core Xenna library. It adds an Airflow-like UI and control plane for pipeline metadata, versioning/review, run control, logs, and observability.
+A Dockerized management plane and runtime execution layer are available under `deployment/`.
 
-### Stack
-- Frontend: Next.js + Tailwind v4 + shadcn-style UI components
-- Backend: FastAPI + SQLAlchemy + Alembic
-- Database: PostgreSQL
+### Deployment structure
 
-### Quick start
-
-```bash
-cd deploy/compose
-cp .env.example .env
-docker compose up --build
+```text
+deployment/
+  docker/
+    Dockerfile.api
+    Dockerfile.web
+    Dockerfile.runtime
+  compose/
+    docker-compose.yml
+    docker-compose.ray-local.yml
+  k8s/
+    ray/
+    app/
+  scripts/
+    build.sh
+    up.sh
+    down.sh
+    logs.sh
+    smoke.sh
+    k8s-deploy.sh
+    k8s-smoke.sh
+    check-image-size.sh
 ```
 
-Core services:
+### Local quickstart (copy/paste)
+
+```bash
+cp .env.example deployment/.env
+./deployment/scripts/build.sh
+./deployment/scripts/up.sh
+./deployment/scripts/smoke.sh
+```
+
+One-command E2E run (build + up + smoke + trigger real pipeline run):
+
+```bash
+./deployment/scripts/e2e.sh --mode local
+```
+
+Core local endpoints:
 - Web UI: <http://localhost:3000>
 - API: <http://localhost:8000>
-- OpenAPI: <http://localhost:8000/docs>
+- API Health: <http://localhost:8000/healthz>
+- Ray Dashboard: <http://localhost:8265>
 
-### Seeded users and roles
-- `admin@xenna.local` / `Admin123!` => `INFRA_ADMIN`
-- `dev@xenna.local` / `Dev123!` => `PIPELINE_DEV`
-- `aiops@xenna.local` / `Aiops123!` => `AIOPS_ENGINEER`
-
-### Seeded starter templates
-On first startup, the management API seeds three published, runnable templates:
-- `Template: Video Caption Batch`
-- `Template: Video Quality Review`
-- `Template: Video Incident Triage`
-
-After login, open **Pipelines** and use **Run Demo** on any template.
-
-### Local management API tests
+Stop stack:
 
 ```bash
-cd apps/management_api
-pip install -r requirements-dev.txt
-pytest -q
+./deployment/scripts/down.sh
 ```
 
-For detailed docs see `docs/management-plane/README.md`.
+### Kubernetes quickstart (copy/paste)
+
+Build and push images to your registry, then set them in `deployment/.env`:
+
+```bash
+API_IMAGE=<registry>/cosmos-xenna-api:<tag>
+WEB_IMAGE=<registry>/cosmos-xenna-web:<tag>
+RUNTIME_IMAGE=<registry>/cosmos-xenna-runtime:<tag>
+```
+
+Deploy and verify:
+
+```bash
+./deployment/scripts/k8s-deploy.sh
+./deployment/scripts/k8s-smoke.sh
+```
+
+K8S E2E run:
+
+```bash
+./deployment/scripts/e2e.sh --mode k8s --skip-bootstrap
+```
+
+### Ray modes
+
+- Local compose mode:
+  - `RAY_MODE=local`
+  - `RAY_ADDRESS=ray://ray-head:10001` (set by `docker-compose.ray-local.yml`)
+- Kubernetes mode:
+  - `RAY_MODE=k8s`
+  - `RAY_ADDRESS=ray://ray-head:10001`
+
+### Health checks
+
+- API: `GET /healthz`
+- Web: `GET /`
+- Runtime: `python deployment/scripts/smoke_test.py --component runtime`
+
+### Image size policy
+
+Soft targets:
+- API image: `< 300 MB`
+- Runtime image: `< 350 MB`
+- Web image: `< 200 MB`
+
+Check sizes:
+
+```bash
+./deployment/scripts/check-image-size.sh
+```
+
+### Inspect image layers
+
+```bash
+docker history cosmos-xenna/api:local
+docker history cosmos-xenna/runtime:local
+docker history cosmos-xenna/web:local
+```
+
+### Troubleshooting Ray connectivity
+
+- Ensure Ray head is healthy:
+  - Compose: `docker compose -f deployment/compose/docker-compose.yml -f deployment/compose/docker-compose.ray-local.yml ps`
+  - K8S: `kubectl -n cosmos-xenna get pods`
+- Verify runtime Ray probe:
+  - Compose: `docker compose -f deployment/compose/docker-compose.yml -f deployment/compose/docker-compose.ray-local.yml exec runtime python deployment/scripts/smoke_test.py --component runtime`
+  - K8S: `kubectl -n cosmos-xenna exec deploy/runtime -- python deployment/scripts/smoke_test.py --component runtime`
+- Confirm `RAY_MODE` and `RAY_ADDRESS` are set correctly in env/config.
+
+For architecture and production notes, see `docs/deployment.md`.
