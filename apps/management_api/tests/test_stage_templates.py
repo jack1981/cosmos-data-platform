@@ -1,0 +1,68 @@
+from __future__ import annotations
+
+import json
+
+from app.schemas.pipeline_spec import StageDefinition
+from app.services.stage_registry import build_stage_executor, list_templates
+
+
+def test_video_templates_are_registered() -> None:
+    ids = {item["id"] for item in list_templates()}
+    assert "builtin.video_download" in ids
+    assert "builtin.video_caption" in ids
+    assert "builtin.video_quality_gate" in ids
+    assert "builtin.video_incident_enrich" in ids
+    assert "builtin.video_writer" in ids
+
+
+def test_video_template_chain_runs_successfully(tmp_path) -> None:
+    output_path = tmp_path / "video_pipeline_output.jsonl"
+    stages = [
+        StageDefinition(
+            stage_id="download",
+            name="Download",
+            stage_template="builtin.video_download",
+            params={"allow_http": False, "timeout_seconds": 0.1},
+        ),
+        StageDefinition(
+            stage_id="caption",
+            name="Caption",
+            stage_template="builtin.video_caption",
+            params={"model_name": "demo-vlm-mini"},
+        ),
+        StageDefinition(
+            stage_id="quality",
+            name="Quality",
+            stage_template="builtin.video_quality_gate",
+            params={"min_confidence": 0.0, "drop_failed": False},
+        ),
+        StageDefinition(
+            stage_id="incident",
+            name="Incident",
+            stage_template="builtin.video_incident_enrich",
+            params={"text_fields": ["caption", "ops_hint"]},
+        ),
+        StageDefinition(
+            stage_id="writer",
+            name="Writer",
+            stage_template="builtin.video_writer",
+            params={"output_path": str(output_path), "drop_output": True},
+        ),
+    ]
+
+    data = [
+        {"video_id": "cam-1", "video_url": "s3://demo/cam-1.mp4", "ops_hint": "smoke near dock"},
+        {"video_id": "cam-2", "video_url": "s3://demo/cam-2.mp4", "ops_hint": "normal operations"},
+    ]
+    for stage in stages:
+        data = build_stage_executor(stage).run(data)
+
+    assert data == []
+    assert output_path.exists()
+
+    lines = output_path.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 2
+    first_record = json.loads(lines[0])
+    assert first_record["video_id"] == "cam-1"
+    assert "caption" in first_record
+    assert first_record["incident"]["severity"] in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}

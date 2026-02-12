@@ -1,0 +1,55 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: xenna-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-xenna_management}
+      POSTGRES_USER: ${POSTGRES_USER:-xenna}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-xenna}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-xenna} -d ${POSTGRES_DB:-xenna_management}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  management_api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/management_api.Dockerfile
+    container_name: xenna-management-api
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-xenna}:${POSTGRES_PASSWORD:-xenna}@postgres:5432/${POSTGRES_DB:-xenna_management}
+      SECRET_KEY: ${SECRET_KEY:-replace-with-random-secret}
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-cuWRV_El44bUKXOBlIqg1uDM7mtgXAQQizK1tvkKF1c=}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      RAY_ADDRESS: ${RAY_ADDRESS:-auto}
+      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-admin@xenna.local}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-Admin123!}
+      DEFAULT_DEV_EMAIL: ${DEFAULT_DEV_EMAIL:-dev@xenna.local}
+      DEFAULT_DEV_PASSWORD: ${DEFAULT_DEV_PASSWORD:-Dev123!}
+      DEFAULT_AIOPS_EMAIL: ${DEFAULT_AIOPS_EMAIL:-aiops@xenna.local}
+      DEFAULT_AIOPS_PASSWORD: ${DEFAULT_AIOPS_PASSWORD:-Aiops123!}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  web:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/web.Dockerfile
+    container_name: xenna-web
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+    depends_on:
+      - management_api
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:
