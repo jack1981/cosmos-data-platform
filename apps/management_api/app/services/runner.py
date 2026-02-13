@@ -13,9 +13,9 @@ from app.core.config import get_settings
 from app.db.session import SessionLocal
 from app.models import PipelineRun, PipelineRunStatus, PipelineVersion, RunEvent, RunLogsIndex
 from app.schemas.pipeline_spec import PipelineSpecDocument
+from app.services.dataset_executor import run_dataset_pipeline
 from app.services.log_store import run_log_store
-from app.services.stage_registry import build_stage_executor, instantiate_stage
-from app.services.xenna_adapter import try_run_with_xenna
+from app.services.stage_registry import build_stage_executor
 
 logger = logging.getLogger(__name__)
 
@@ -92,30 +92,28 @@ class PipelineRunnerService:
 
             spec = PipelineSpecDocument.model_validate(version.spec_json)
             input_data = spec.io.source.static_data or []
+            data_model = spec.data_model
 
             if cancel_event.is_set():
                 raise InterruptedError("Run stop requested before execution")
 
-            stage_instances: list[Any] = []
-            for stage in spec.stages:
-                stage_instances.append(instantiate_stage(stage))
-
-            xenna_ok, xenna_result = try_run_with_xenna(
-                spec,
-                stage_instances,
-                input_data,
-                lambda msg: self._append_log(run_id, msg),
-            )
-
             stage_metrics: list[dict[str, Any]] = []
             output_data = input_data
+            dataset_output_ref: Any = None
 
-            if xenna_ok:
-                output_data = xenna_result
-                self._create_event(db, run_id, "execution_mode", "Executed with native Xenna adapter")
-                self._append_log(run_id, "Execution completed using Xenna adapter")
+            if data_model == "dataset":
+                self._create_event(db, run_id, "execution_mode", "Executed with dataset DAG adapter")
+                self._append_log(run_id, "Executing dataset-mode pipeline")
+                dataset_result = run_dataset_pipeline(spec, lambda msg: self._append_log(run_id, msg))
+                stage_metrics = dataset_result.stage_metrics
+                dataset_output_ref = dataset_result.output_ref
+                output_data = []
+                self._append_log(
+                    run_id,
+                    f"Dataset execution completed with output {dataset_output_ref.uri} ({dataset_output_ref.format})",
+                )
             else:
-                self._create_event(db, run_id, "execution_mode", "Executed with local simulated linear adapter")
+                self._create_event(db, run_id, "execution_mode", "Executed with local linear adapter")
                 for stage in spec.stages:
                     if cancel_event.is_set():
                         raise InterruptedError("Run stop requested")
@@ -150,21 +148,38 @@ class PipelineRunnerService:
             end_ts = datetime.now(timezone.utc)
             duration_seconds = time.perf_counter() - start_monotonic
 
+            input_count = len(input_data)
+            if data_model == "dataset" and spec.io.source.kind == "dataset_uri":
+                input_count = 1 if spec.io.source.uri else 0
+
+            metrics_summary: dict[str, Any] = {
+                "input_count": input_count,
+                "stages": stage_metrics,
+                "execution_mode": spec.execution_mode,
+                "data_model": data_model,
+                "duration_seconds": round(duration_seconds, 4),
+            }
+
+            if data_model == "dataset" and dataset_output_ref is not None:
+                metrics_summary["output_dataset_uri"] = dataset_output_ref.uri
+                metrics_summary["output_dataset_format"] = dataset_output_ref.format
+            else:
+                metrics_summary["output_count"] = len(output_data)
+
             run.status = PipelineRunStatus.SUCCEEDED
             run.end_time = end_ts
             run.duration_seconds = duration_seconds
             run.error_message = None
-            run.metrics_summary = {
-                "input_count": len(input_data),
-                "output_count": len(output_data),
-                "stages": stage_metrics,
-                "execution_mode": spec.execution_mode,
-                "duration_seconds": round(duration_seconds, 4),
-            }
-            run.artifact_pointers = {
+            run.metrics_summary = metrics_summary
+
+            artifact_pointers = {
                 "sink": spec.io.sink.uri,
                 "kind": spec.io.sink.kind,
             }
+            if data_model == "dataset" and dataset_output_ref is not None:
+                artifact_pointers["output_uri"] = dataset_output_ref.uri
+                artifact_pointers["output_format"] = dataset_output_ref.format
+            run.artifact_pointers = artifact_pointers
             db.add(run)
 
             logs_index = RunLogsIndex(
@@ -189,7 +204,7 @@ class PipelineRunnerService:
                 self._create_event(db, run_id, "run_stopped", str(exc))
                 db.commit()
             self._append_log(run_id, f"Run stopped: {exc}")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             run = db.get(PipelineRun, run_id)
             if run is not None:
                 run.status = PipelineRunStatus.FAILED

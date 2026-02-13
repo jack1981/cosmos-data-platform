@@ -103,7 +103,9 @@ def upgrade() -> None:
     op.create_table(
         "pipeline_shares",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("team_id", sa.String(length=36), sa.ForeignKey("teams.id", ondelete="CASCADE"), nullable=False),
         sa.Column("access_level", access_level_enum, nullable=False),
         sa.UniqueConstraint("pipeline_id", "team_id", name="uq_pipeline_team_share"),
@@ -114,7 +116,9 @@ def upgrade() -> None:
     op.create_table(
         "pipeline_versions",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("version_number", sa.Integer(), nullable=False),
         sa.Column("status", pipeline_version_status_enum, nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.false()),
@@ -149,7 +153,9 @@ def upgrade() -> None:
     op.create_table(
         "pipeline_runs",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column(
             "pipeline_version_id",
             sa.String(length=36),
@@ -177,7 +183,9 @@ def upgrade() -> None:
     op.create_table(
         "run_events",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "run_id", sa.String(length=36), sa.ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("event_type", sa.String(length=128), nullable=False),
         sa.Column("stage_id", sa.String(length=128), nullable=True),
         sa.Column("message", sa.Text(), nullable=False),
@@ -192,7 +200,9 @@ def upgrade() -> None:
     op.create_table(
         "run_logs_index",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False),
+        sa.Column(
+            "run_id", sa.String(length=36), sa.ForeignKey("pipeline_runs.id", ondelete="CASCADE"), nullable=False
+        ),
         sa.Column("storage_type", sa.String(length=64), nullable=False),
         sa.Column("pointer", sa.String(length=512), nullable=False),
         sa.Column("metadata_json", sa.JSON(), nullable=False),
@@ -231,7 +241,9 @@ def upgrade() -> None:
     op.create_table(
         "retention_policies",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=True),
+        sa.Column(
+            "pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=True
+        ),
         sa.Column("run_days", sa.Integer(), nullable=False),
         sa.Column("log_days", sa.Integer(), nullable=False),
         sa.Column("event_days", sa.Integer(), nullable=False),
@@ -258,8 +270,12 @@ def upgrade() -> None:
     op.create_table(
         "incidents",
         sa.Column("id", sa.String(length=36), primary_key=True),
-        sa.Column("pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="SET NULL"), nullable=True),
-        sa.Column("run_id", sa.String(length=36), sa.ForeignKey("pipeline_runs.id", ondelete="SET NULL"), nullable=True),
+        sa.Column(
+            "pipeline_id", sa.String(length=36), sa.ForeignKey("pipelines.id", ondelete="SET NULL"), nullable=True
+        ),
+        sa.Column(
+            "run_id", sa.String(length=36), sa.ForeignKey("pipeline_runs.id", ondelete="SET NULL"), nullable=True
+        ),
         sa.Column("title", sa.String(length=255), nullable=False),
         sa.Column("severity", incident_severity_enum, nullable=False),
         sa.Column("status", incident_status_enum, nullable=False),

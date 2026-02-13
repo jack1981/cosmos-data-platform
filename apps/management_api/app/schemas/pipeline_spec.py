@@ -58,6 +58,8 @@ class IOConfig(BaseModel):
 class RuntimeConfig(BaseModel):
     ray_mode: Literal["local", "k8s"] | None = None
     ray_address: str | None = None
+    work_dir: str | None = None
+    storage_options: dict[str, Any] = Field(default_factory=dict)
     autoscaling: dict[str, Any] = Field(default_factory=dict)
     retry_policy: dict[str, Any] = Field(default_factory=dict)
 
@@ -80,6 +82,7 @@ class PipelineSpecDocument(BaseModel):
     tags: list[str] = Field(default_factory=list)
     owners: list[str] = Field(default_factory=list)
     team_ids: list[str] = Field(default_factory=list)
+    data_model: Literal["samples", "dataset"] = "samples"
     execution_mode: Literal["streaming", "batch", "serving"] = "streaming"
     stages: list[StageDefinition] = Field(default_factory=list)
     edges: list[PipelineEdge] = Field(default_factory=list)
@@ -103,9 +106,17 @@ class PipelineSpecDocument(BaseModel):
                 for idx in range(len(self.stages) - 1)
             ]
 
+        if self.data_model == "samples":
+            self._validate_samples_linear_chain(stage_ids)
+            return self
+
+        self._validate_dataset_dag(stage_ids)
+        return self
+
+    def _validate_samples_linear_chain(self, stage_ids: list[str]) -> None:
         if len(self.stages) == 1:
             self.edges = []
-            return self
+            return
 
         if len(self.edges) != len(self.stages) - 1:
             raise ValueError("Linear pipelines require exactly N-1 edges")
@@ -148,7 +159,44 @@ class PipelineSpecDocument(BaseModel):
         if topo_order != stage_ids:
             raise ValueError("Stage order must match topological order for linear execution")
 
-        return self
+    def _validate_dataset_dag(self, stage_ids: list[str]) -> None:
+        valid_nodes = set(stage_ids)
+        indegree = {stage_id: 0 for stage_id in stage_ids}
+        adjacency: dict[str, list[str]] = {stage_id: [] for stage_id in stage_ids}
+        seen_edges: set[tuple[str, str]] = set()
+
+        for edge in self.edges:
+            pair = (edge.source, edge.target)
+            if pair in seen_edges:
+                raise ValueError("Dataset pipeline cannot contain duplicate edges")
+            seen_edges.add(pair)
+
+            if edge.source not in valid_nodes or edge.target not in valid_nodes:
+                raise ValueError("All edges must reference known stage IDs")
+            if edge.source == edge.target:
+                raise ValueError("Dataset pipeline cannot contain self-referential edges")
+
+            indegree[edge.target] += 1
+            adjacency[edge.source].append(edge.target)
+
+        queue: deque[str] = deque([node for node in stage_ids if indegree[node] == 0])
+        local_indegree = indegree.copy()
+        visited = 0
+
+        while queue:
+            node = queue.popleft()
+            visited += 1
+            for nxt in adjacency[node]:
+                local_indegree[nxt] -= 1
+                if local_indegree[nxt] == 0:
+                    queue.append(nxt)
+
+        if visited != len(stage_ids):
+            raise ValueError("Dataset pipeline edges must form an acyclic graph")
+
+        if len(self.stages) == 1:
+            self.edges = []
+            return
 
 
 class StructuredDiff(BaseModel):

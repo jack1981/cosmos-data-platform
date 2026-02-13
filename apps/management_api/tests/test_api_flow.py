@@ -10,10 +10,25 @@ def _login(client, email: str, password: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
+def test_seeded_starter_templates_are_listed(client) -> None:
+    dev_headers = _login(client, "dev@pipelineforge.local", "Dev123!")
+    resp = client.get("/api/v1/pipelines", headers=dev_headers)
+    assert resp.status_code == 200
+    items = resp.json()
+    external_ids = {item["external_id"] for item in items}
+
+    expected = {
+        "template_video_caption_batch",
+        "template_video_quality_review",
+        "template_video_incident_triage",
+    }
+    assert expected.issubset(external_ids)
+
+
 def test_end_to_end_pipeline_run_flow(client) -> None:
-    dev_headers = _login(client, "dev@xenna.local", "Dev123!")
-    admin_headers = _login(client, "admin@xenna.local", "Admin123!")
-    aiops_headers = _login(client, "aiops@xenna.local", "Aiops123!")
+    dev_headers = _login(client, "dev@pipelineforge.local", "Dev123!")
+    admin_headers = _login(client, "admin@pipelineforge.local", "Admin123!")
+    aiops_headers = _login(client, "aiops@pipelineforge.local", "Aiops123!")
 
     pipeline_resp = client.post(
         "/api/v1/pipelines",

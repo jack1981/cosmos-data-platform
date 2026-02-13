@@ -26,11 +26,7 @@ class AuthContext:
 
 
 def get_user_roles(db: Session, user_id: str) -> list[RoleName]:
-    stmt = (
-        select(Role.name)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(UserRole.user_id == user_id)
-    )
+    stmt = select(Role.name).join(UserRole, UserRole.role_id == Role.id).where(UserRole.user_id == user_id)
     return [row[0] for row in db.execute(stmt).all()]
 
 

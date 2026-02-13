@@ -14,9 +14,9 @@ settings = get_settings()
 configure_logging(settings.log_level)
 
 app = FastAPI(
-    title="Cosmos-Xenna Management API",
+    title="PipelineForge Management API",
     version="0.1.0",
-    description="Minimal control plane for Cosmos-Xenna pipeline metadata and execution.",
+    description="Control plane for PipelineForge pipeline metadata and execution.",
     openapi_tags=[
         {"name": "auth", "description": "Authentication and token lifecycle"},
         {"name": "pipelines", "description": "Pipeline metadata, versions, review, publishing"},

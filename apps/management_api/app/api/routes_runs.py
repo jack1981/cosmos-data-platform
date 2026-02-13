@@ -14,8 +14,8 @@ from app.models import (
     PipelineRunStatus,
     PipelineVersion,
     PipelineVersionStatus,
-    RunEvent,
     RoleName,
+    RunEvent,
 )
 from app.schemas.runs import (
     PipelineRunRead,
@@ -85,7 +85,9 @@ def trigger_run(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> PipelineRunRead:
     pipeline = assert_pipeline_access(db, current_user.context, payload.pipeline_id, write=False)
-    if not any(role in current_user.roles for role in [RoleName.PIPELINE_DEV, RoleName.INFRA_ADMIN, RoleName.AIOPS_ENGINEER]):
+    if not any(
+        role in current_user.roles for role in [RoleName.PIPELINE_DEV, RoleName.INFRA_ADMIN, RoleName.AIOPS_ENGINEER]
+    ):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Role cannot trigger runs")
 
     version = _resolve_target_version(db, pipeline.id, payload.pipeline_version_id)
@@ -238,7 +240,11 @@ def list_run_events(
 
     assert_pipeline_access(db, current_user.context, run.pipeline_id, write=False)
 
-    events = db.execute(select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.created_at.asc())).scalars().all()
+    events = (
+        db.execute(select(RunEvent).where(RunEvent.run_id == run_id).order_by(RunEvent.created_at.asc()))
+        .scalars()
+        .all()
+    )
     return [
         RunEventRead(
             id=event.id,
@@ -292,11 +298,15 @@ async def stream_run_logs(
                 if current_run is None:
                     yield "event: end\ndata: run-not-found\n\n"
                     break
-                if current_run.status in {
-                    PipelineRunStatus.SUCCEEDED,
-                    PipelineRunStatus.FAILED,
-                    PipelineRunStatus.STOPPED,
-                } and not lines:
+                if (
+                    current_run.status
+                    in {
+                        PipelineRunStatus.SUCCEEDED,
+                        PipelineRunStatus.FAILED,
+                        PipelineRunStatus.STOPPED,
+                    }
+                    and not lines
+                ):
                     yield "event: end\ndata: completed\n\n"
                     break
 
