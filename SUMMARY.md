@@ -115,14 +115,14 @@
   - keyword scan across source text returned no hits
 
 ### LOC measurement (same method as baseline)
-- Final timestamp (UTC): `2026-02-13T19:24:28Z`
+- Final timestamp (UTC): `2026-02-13T19:29:41Z`
 - Final command: `python3 scripts/loc.py`
-- Final `TOTAL_LOC = 9365`
+- Final `TOTAL_LOC = 11477`
 
 ### LOC gate result
 - Baseline LOC: `42660`
-- Final LOC: `9365`
-- Reduction: `33295` lines (`78.05%`)
+- Final LOC: `11477`
+- Reduction: `31183` lines (`73.10%`)
 - Gate (`>=20%`) status: **PASSED**
 
 ## Top 5 reductions (why)
