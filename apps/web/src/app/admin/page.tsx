@@ -18,7 +18,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [audit, setAudit] = useState<AdminAuditEntry[]>([]);
 
-  const [newUserEmail, setNewUserEmail] = useState("new.user@xenna.local");
+  const [newUserEmail, setNewUserEmail] = useState("new.user@pipelineforge.local");
   const [newUserName, setNewUserName] = useState("New User");
   const [newUserPassword, setNewUserPassword] = useState("User123!");
   const [newUserRole, setNewUserRole] = useState("PIPELINE_DEV");

@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 export default function LoginPage() {
   const { signIn, isAuthenticated } = useAuth();
   const router = useRouter();
-  const [email, setEmail] = useState("dev@xenna.local");
+  const [email, setEmail] = useState("dev@pipelineforge.local");
   const [password, setPassword] = useState("Dev123!");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -40,8 +40,8 @@ export default function LoginPage() {
     <div className="flex min-h-screen items-center justify-center px-4">
       <Card className="w-full max-w-md">
         <CardHeader>
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-muted)]">Cosmos-Xenna</p>
-          <h1 className="text-xl font-semibold">Management Plane Login</h1>
+          <p className="text-xs uppercase tracking-[0.2em] text-[var(--color-muted)]">Management Plane</p>
+          <h1 className="text-xl font-semibold">Login</h1>
         </CardHeader>
         <CardContent>
           <form className="space-y-3" onSubmit={onSubmit}>
@@ -60,9 +60,9 @@ export default function LoginPage() {
           </form>
           <div className="mt-4 rounded-md bg-[var(--color-surface)] p-3 text-xs text-[var(--color-muted)]">
             <p className="font-semibold">Default dev users</p>
-            <p>Admin: admin@xenna.local / Admin123!</p>
-            <p>Developer: dev@xenna.local / Dev123!</p>
-            <p>AIOps: aiops@xenna.local / Aiops123!</p>
+            <p>Admin: admin@pipelineforge.local / Admin123!</p>
+            <p>Developer: dev@pipelineforge.local / Dev123!</p>
+            <p>AIOps: aiops@pipelineforge.local / Aiops123!</p>
           </div>
         </CardContent>
       </Card>
