@@ -3,12 +3,10 @@
 .vscode
 
 .venv
-.venv-management
-.venv-notebook
+.venv-*
 __pycache__
 *.pyc
 *.pyo
-*.pyd
 *.db
 *.log
 
@@ -20,10 +18,8 @@ apps/web/.next
 
 .pytest_cache
 .ruff_cache
-
-target
-build
-dist
-output
+.mypy_cache
 
 .env
+docs
+scripts

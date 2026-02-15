@@ -40,6 +40,12 @@ cp .env.example .env
 make docker-run
 ```
 
+Or use the helper script:
+
+```bash
+./up.sh
+```
+
 3. Open the services:
 - Web: <http://localhost:3000>
 - API docs: <http://localhost:8000/docs>
@@ -111,6 +117,12 @@ make docker-run
 
 ```bash
 docker compose down
+```
+
+Or:
+
+```bash
+./down.sh
 ```
 
 ## Configuration Reference
