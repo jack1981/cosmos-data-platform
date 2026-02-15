@@ -9,8 +9,8 @@
 
 ### Baseline LOC method
 - `cloc` was unavailable.
-- Deterministic script added: `scripts/loc.py`
-- Measurement command: `python3 scripts/loc.py`
+- Deterministic custom LOC counter was used for audit measurement.
+- Measurement command at audit time: `python3 scripts/loc.py`
 - Exclusions: lock files, virtualenvs, node_modules, target/build artifacts, binaries, db files, vendored/generated paths.
 
 ### Baseline LOC result
@@ -116,7 +116,7 @@
 
 ### LOC measurement (same method as baseline)
 - Final timestamp (UTC): `2026-02-13T19:29:41Z`
-- Final command: `python3 scripts/loc.py`
+- Final command at audit time: `python3 scripts/loc.py`
 - Final `TOTAL_LOC = 11477`
 
 ### LOC gate result

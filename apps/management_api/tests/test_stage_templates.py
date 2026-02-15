@@ -26,6 +26,45 @@ def test_dataset_templates_are_registered() -> None:
     assert "builtin.dataset_lance_writer" in ids
 
 
+def test_datafiner_compatibility_templates_are_registered() -> None:
+    ids = {item["id"] for item in list_templates()}
+    expected = {
+        "builtin.datafiner_lance_reader",
+        "builtin.datafiner_lance_writer",
+        "builtin.datafiner_splitter",
+        "builtin.datafiner_visualizer",
+        "builtin.datafiner_schema",
+        "builtin.datafiner_row_number",
+        "builtin.datafiner_stat",
+        "builtin.datafiner_column_select",
+        "builtin.datafiner_column_drop",
+        "builtin.datafiner_column_alias",
+        "builtin.datafiner_filter",
+        "builtin.datafiner_filter_by_ratio",
+        "builtin.datafiner_selector",
+        "builtin.datafiner_reorder",
+        "builtin.datafiner_interleaved_reorder",
+        "builtin.datafiner_union_by_name",
+        "builtin.datafiner_union_by_position",
+        "builtin.datafiner_joiner",
+        "builtin.datafiner_add_constants",
+        "builtin.datafiner_conversation_to_paragraph",
+        "builtin.datafiner_concatenate_columns",
+        "builtin.datafiner_concat",
+        "builtin.datafiner_duplicate_sample_ratio",
+        "builtin.datafiner_sampler",
+        "builtin.datafiner_flatten",
+        "builtin.datafiner_group_flatten",
+        "builtin.datafiner_fasttext_scorer",
+        "builtin.datafiner_fasttext_filter",
+        "builtin.datafiner_seq_classifier_scorer",
+        "builtin.datafiner_minhash",
+        "builtin.datafiner_add_rank_quantile",
+        "builtin.datafiner_token_counter_v2",
+    }
+    assert expected.issubset(ids)
+
+
 def test_video_template_chain_runs_successfully(tmp_path) -> None:
     output_path = tmp_path / "video_pipeline_output.jsonl"
     stages = [
