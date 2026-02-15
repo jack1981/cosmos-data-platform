@@ -511,7 +511,11 @@ def _text_pretraining_curation_spec() -> dict[str, Any]:
     return {
         "pipeline_id": "template_text_pretraining_curation",
         "name": "Template: Text Pre-Training Dataset Curation",
-        "description": "5-source ingest + concat + token count + quality score/filter + domain classify + MinHash dedup + rank quantile + balanced mix + sample + write.",
+        "description": (
+            "5-source ingest + concat + token count + quality score/filter"
+            " + domain classify + MinHash dedup + rank quantile"
+            " + balanced mix + sample + write."
+        ),
         "tags": ["template", "starter", "datafiner", "dataset", "pretraining", "curation", "ml"],
         "owners": [],
         "team_ids": [],
@@ -780,7 +784,10 @@ def _seed_datafiner_template_specs() -> list[dict[str, Any]]:
         {
             "external_id": "template_text_pretraining_curation",
             "name": "Template: Text Pre-Training Dataset Curation",
-            "description": "Multi-source text curation pipeline: 5-corpus ingest, concat, score, classify, deduplicate, bucket, mix, and sample.",
+            "description": (
+                "Multi-source text curation pipeline: 5-corpus ingest,"
+                " concat, score, classify, deduplicate, bucket, mix, and sample."
+            ),
             "execution_mode": "batch",
             "tags": ["template", "starter", "datafiner", "dataset", "pretraining", "curation", "ml"],
             "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},

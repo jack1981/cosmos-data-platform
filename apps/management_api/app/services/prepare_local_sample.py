@@ -44,40 +44,187 @@ _SOURCE_DOMAINS: dict[str, list[str]] = {
 
 _DOMAIN_TEMPLATES: dict[str, list[str]] = {
     "stem": [
-        "The experiment measured the relationship between {topic_a} and {topic_b} across multiple trials under controlled laboratory conditions with careful attention to systematic error sources and reproducibility of measurements in the {field} domain",
-        "Researchers observed that increasing {topic_a} levels resulted in a proportional decrease of {topic_b} concentrations when the system was held at equilibrium in the {field} research facility during the extended observation period",
-        "A comprehensive review of {field} literature reveals significant advances in understanding {topic_a} mechanisms and their interaction with {topic_b} pathways in biological and physical systems over the past decade of scientific inquiry",
-        "The computational model predicts that {topic_a} fluctuations can be minimized by adjusting {topic_b} parameters within the tolerance range specified by the {field} standards committee for calibration protocols",
+        (
+            "The experiment measured the relationship between {topic_a} and"
+            " {topic_b} across multiple trials under controlled laboratory"
+            " conditions with careful attention to systematic error sources"
+            " and reproducibility of measurements in the {field} domain"
+        ),
+        (
+            "Researchers observed that increasing {topic_a} levels resulted"
+            " in a proportional decrease of {topic_b} concentrations when"
+            " the system was held at equilibrium in the {field} research"
+            " facility during the extended observation period"
+        ),
+        (
+            "A comprehensive review of {field} literature reveals significant"
+            " advances in understanding {topic_a} mechanisms and their"
+            " interaction with {topic_b} pathways in biological and physical"
+            " systems over the past decade of scientific inquiry"
+        ),
+        (
+            "The computational model predicts that {topic_a} fluctuations"
+            " can be minimized by adjusting {topic_b} parameters within the"
+            " tolerance range specified by the {field} standards committee"
+            " for calibration protocols"
+        ),
     ],
     "humanities": [
-        "The narrative structure of the text reveals complex themes of {topic_a} and {topic_b} that resonate with broader cultural movements in {field} studies throughout the modern and postmodern literary periods",
-        "Historical analysis of {topic_a} demonstrates how societal attitudes toward {topic_b} shifted dramatically during this era according to multiple primary source documents in {field} archives and museum collections",
-        "Philosophical discourse surrounding {topic_a} has been fundamentally shaped by competing interpretations of {topic_b} in the context of {field} thought and its enduring influence on contemporary intellectual traditions",
-        "The artistic movement drew heavily from {topic_a} imagery and symbolic representations of {topic_b} to communicate deeper truths about the human experience as documented in {field} scholarship and critical reviews",
+        (
+            "The narrative structure of the text reveals complex themes of"
+            " {topic_a} and {topic_b} that resonate with broader cultural"
+            " movements in {field} studies throughout the modern and"
+            " postmodern literary periods"
+        ),
+        (
+            "Historical analysis of {topic_a} demonstrates how societal"
+            " attitudes toward {topic_b} shifted dramatically during this"
+            " era according to multiple primary source documents in {field}"
+            " archives and museum collections"
+        ),
+        (
+            "Philosophical discourse surrounding {topic_a} has been"
+            " fundamentally shaped by competing interpretations of"
+            " {topic_b} in the context of {field} thought and its enduring"
+            " influence on contemporary intellectual traditions"
+        ),
+        (
+            "The artistic movement drew heavily from {topic_a} imagery and"
+            " symbolic representations of {topic_b} to communicate deeper"
+            " truths about the human experience as documented in {field}"
+            " scholarship and critical reviews"
+        ),
     ],
     "code": [
-        "def process_{topic_a}(data: list[dict]) -> list[dict]:\n    results = []\n    for item in data:\n        if item.get('{topic_b}') is not None:\n            transformed = {{k: v for k, v in item.items() if k != '{topic_b}'}}\n            transformed['processed'] = True\n            results.append(transformed)\n    return results",
-        "class {topic_a}Handler:\n    def __init__(self, config: dict):\n        self.config = config\n        self.{topic_b}_cache = {{}}\n    def execute(self, payload: dict) -> dict:\n        key = payload.get('id', '')\n        if key in self.{topic_b}_cache:\n            return self.{topic_b}_cache[key]\n        result = self._compute(payload)\n        self.{topic_b}_cache[key] = result\n        return result",
-        "async def fetch_{topic_a}_data(session, endpoint: str, params: dict) -> dict:\n    url = f'{{endpoint}}/{topic_b}'\n    async with session.get(url, params=params) as response:\n        if response.status != 200:\n            raise RuntimeError(f'Failed to fetch {topic_a}: {{response.status}}')\n        return await response.json()",
-        "import logging\nlogger = logging.getLogger(__name__)\n\ndef validate_{topic_a}(record: dict, schema: dict) -> bool:\n    for field, field_type in schema.items():\n        value = record.get(field)\n        if value is None:\n            logger.warning('Missing field %s in {topic_b} record', field)\n            return False\n        if not isinstance(value, field_type):\n            return False\n    return True",
+        (
+            "def process_{topic_a}(data: list[dict]) -> list[dict]:\n"
+            "    results = []\n"
+            "    for item in data:\n"
+            "        if item.get('{topic_b}') is not None:\n"
+            "            transformed = {{k: v for k, v in item.items()"
+            " if k != '{topic_b}'}}\n"
+            "            transformed['processed'] = True\n"
+            "            results.append(transformed)\n"
+            "    return results"
+        ),
+        (
+            "class {topic_a}Handler:\n"
+            "    def __init__(self, config: dict):\n"
+            "        self.config = config\n"
+            "        self.{topic_b}_cache = {{}}\n"
+            "    def execute(self, payload: dict) -> dict:\n"
+            "        key = payload.get('id', '')\n"
+            "        if key in self.{topic_b}_cache:\n"
+            "            return self.{topic_b}_cache[key]\n"
+            "        result = self._compute(payload)\n"
+            "        self.{topic_b}_cache[key] = result\n"
+            "        return result"
+        ),
+        (
+            "async def fetch_{topic_a}_data(session, endpoint:"
+            " str, params: dict) -> dict:\n"
+            "    url = f'{{endpoint}}/{topic_b}'\n"
+            "    async with session.get(url, params=params)"
+            " as response:\n"
+            "        if response.status != 200:\n"
+            "            raise RuntimeError(f'Failed to fetch"
+            " {topic_a}: {{response.status}}')\n"
+            "        return await response.json()"
+        ),
+        (
+            "import logging\n"
+            "logger = logging.getLogger(__name__)\n\n"
+            "def validate_{topic_a}(record: dict,"
+            " schema: dict) -> bool:\n"
+            "    for field, field_type in schema.items():\n"
+            "        value = record.get(field)\n"
+            "        if value is None:\n"
+            "            logger.warning('Missing field %s in"
+            " {topic_b} record', field)\n"
+            "            return False\n"
+            "        if not isinstance(value, field_type):\n"
+            "            return False\n"
+            "    return True"
+        ),
     ],
     "math": [
-        "Let f(x) = {topic_a}(x) be a continuous function on the interval [0,1]. We prove that the integral of f converges under the {topic_b} norm when the Lipschitz constant is bounded by the {field} criterion for uniform convergence of function series",
-        "Theorem: For any {topic_a} matrix A of dimension n, the eigenvalues satisfy the {topic_b} bound when the spectral radius is constrained by the {field} inequality derived from the minimax characterization of singular values",
-        "Consider the optimization problem where we minimize the {topic_a} objective subject to {topic_b} constraints in the feasible region defined by the {field} polytope with vertices at the extreme points of the constraint set",
-        "The probability that a random {topic_a} variable exceeds the {topic_b} threshold is bounded above by the {field} concentration inequality which provides exponential tail decay for sub-Gaussian distributions",
+        (
+            "Let f(x) = {topic_a}(x) be a continuous function on the"
+            " interval [0,1]. We prove that the integral of f converges"
+            " under the {topic_b} norm when the Lipschitz constant is"
+            " bounded by the {field} criterion for uniform convergence"
+            " of function series"
+        ),
+        (
+            "Theorem: For any {topic_a} matrix A of dimension n, the"
+            " eigenvalues satisfy the {topic_b} bound when the spectral"
+            " radius is constrained by the {field} inequality derived"
+            " from the minimax characterization of singular values"
+        ),
+        (
+            "Consider the optimization problem where we minimize the"
+            " {topic_a} objective subject to {topic_b} constraints in"
+            " the feasible region defined by the {field} polytope with"
+            " vertices at the extreme points of the constraint set"
+        ),
+        (
+            "The probability that a random {topic_a} variable exceeds"
+            " the {topic_b} threshold is bounded above by the {field}"
+            " concentration inequality which provides exponential tail"
+            " decay for sub-Gaussian distributions"
+        ),
     ],
     "general": [
-        "The rapid development of {topic_a} technology has transformed how people interact with {topic_b} systems in everyday life creating new opportunities and challenges for individuals and organizations across the {field} sector",
-        "Market analysts predict that {topic_a} investments will continue to grow as consumer demand for {topic_b} products and services increases across the {field} industry throughout the coming fiscal quarters and beyond",
-        "Community leaders emphasized the importance of {topic_a} education programs in preparing the next generation for careers in {topic_b} and related fields as the {field} economy continues its rapid transformation",
-        "The environmental impact assessment concluded that {topic_a} emissions could be reduced by implementing {topic_b} mitigation strategies recommended by the {field} advisory panel and supported by recent peer-reviewed research",
+        (
+            "The rapid development of {topic_a} technology has transformed"
+            " how people interact with {topic_b} systems in everyday life"
+            " creating new opportunities and challenges for individuals"
+            " and organizations across the {field} sector"
+        ),
+        (
+            "Market analysts predict that {topic_a} investments will"
+            " continue to grow as consumer demand for {topic_b} products"
+            " and services increases across the {field} industry throughout"
+            " the coming fiscal quarters and beyond"
+        ),
+        (
+            "Community leaders emphasized the importance of {topic_a}"
+            " education programs in preparing the next generation for"
+            " careers in {topic_b} and related fields as the {field}"
+            " economy continues its rapid transformation"
+        ),
+        (
+            "The environmental impact assessment concluded that {topic_a}"
+            " emissions could be reduced by implementing {topic_b}"
+            " mitigation strategies recommended by the {field} advisory"
+            " panel and supported by recent peer-reviewed research"
+        ),
     ],
     "social_science": [
-        "Survey data collected from participants across multiple demographic groups indicates that attitudes toward {topic_a} vary significantly based on {topic_b} exposure and prior experience in the {field} domain of study",
-        "The longitudinal study tracked changes in {topic_a} behavior patterns over a period of several years and found strong correlations with {topic_b} policy interventions implemented at the regional level in {field} contexts",
-        "Cross-cultural comparison reveals that {topic_a} norms differ substantially between societies that prioritize {topic_b} values and those that emphasize alternative frameworks within the broader {field} theoretical landscape",
-        "Economic modeling suggests that {topic_a} incentive structures can be redesigned to promote {topic_b} outcomes when policymakers account for behavioral biases documented in the {field} experimental literature",
+        (
+            "Survey data collected from participants across multiple"
+            " demographic groups indicates that attitudes toward {topic_a}"
+            " vary significantly based on {topic_b} exposure and prior"
+            " experience in the {field} domain of study"
+        ),
+        (
+            "The longitudinal study tracked changes in {topic_a} behavior"
+            " patterns over a period of several years and found strong"
+            " correlations with {topic_b} policy interventions implemented"
+            " at the regional level in {field} contexts"
+        ),
+        (
+            "Cross-cultural comparison reveals that {topic_a} norms differ"
+            " substantially between societies that prioritize {topic_b}"
+            " values and those that emphasize alternative frameworks within"
+            " the broader {field} theoretical landscape"
+        ),
+        (
+            "Economic modeling suggests that {topic_a} incentive structures"
+            " can be redesigned to promote {topic_b} outcomes when"
+            " policymakers account for behavioral biases documented in"
+            " the {field} experimental literature"
+        ),
     ],
 }
 
