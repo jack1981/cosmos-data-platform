@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowRight,
+  ChevronRight,
   Database,
+  Search,
   GripVertical,
   Plus,
   Save,
@@ -20,6 +22,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import type { StageTemplate } from "@/lib/api";
+import {
+  buildStageCatalogEntries,
+  buildStageTree,
+  filterStageEntries,
+  highlightMatch,
+  type StageCatalogEntry,
+} from "@/components/pipelines/pipeline-catalog";
 import type { Pipeline, PipelineSpecDocument, PipelineVersion, StageDefinition } from "@/types/api";
 
 const defaultSpec = (name = "Untitled Pipeline"): PipelineSpecDocument => ({
@@ -28,6 +38,7 @@ const defaultSpec = (name = "Untitled Pipeline"): PipelineSpecDocument => ({
   tags: [],
   owners: [],
   team_ids: [],
+  data_model: "samples",
   execution_mode: "streaming",
   stages: [],
   edges: [],
@@ -59,6 +70,10 @@ type ConnectionDraft =
   | { kind: "new"; sourceId: string; pointer: GraphPoint }
   | { kind: "reconnect-source"; edgeId: string; targetId: string; pointer: GraphPoint }
   | { kind: "reconnect-target"; edgeId: string; sourceId: string; pointer: GraphPoint };
+
+const PALETTE_TREE_STATE_KEY = "pipelineforge.stage_palette.expanded";
+const SEARCH_ROW_HEIGHT = 78;
+const SEARCH_OVERSCAN = 5;
 
 function edgeId(edge: GraphEdge) {
   return `${edge.source}->${edge.target}`;
@@ -210,7 +225,7 @@ export function PipelineBuilder({
   const { apiCall, hasRole } = useAuth();
   const [spec, setSpec] = useState<PipelineSpecDocument>(normalizeSpecEdges(initialVersion?.spec ?? defaultSpec(pipeline?.name)));
   const [changeSummary, setChangeSummary] = useState("UI edit");
-  const [templates, setTemplates] = useState<Array<{ id: string; name: string; description: string }>>([]);
+  const [templates, setTemplates] = useState<StageTemplate[]>([]);
   const [versions, setVersions] = useState<PipelineVersion[]>([]);
   const [activeVersionId, setActiveVersionId] = useState<string | null>(initialVersion?.id ?? null);
   const [selectedStageId, setSelectedStageId] = useState<string | null>(spec.stages[0]?.stage_id ?? null);
@@ -219,9 +234,14 @@ export function PipelineBuilder({
   const [anchors, setAnchors] = useState<Record<string, StageAnchors>>({});
   const [message, setMessage] = useState<string | null>(null);
   const [diffPreview, setDiffPreview] = useState<Record<string, unknown> | null>(null);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [debouncedPaletteQuery, setDebouncedPaletteQuery] = useState("");
+  const [expandedPaletteTree, setExpandedPaletteTree] = useState<Record<string, boolean>>({});
+  const [searchScrollTop, setSearchScrollTop] = useState(0);
 
   const graphRef = useRef<HTMLDivElement | null>(null);
   const stageRefs = useRef<Record<string, HTMLElement | null>>({});
+  const searchScrollRef = useRef<HTMLDivElement | null>(null);
 
   const canEdit = hasRole("PIPELINE_DEV") || hasRole("INFRA_ADMIN");
   const canPublish = hasRole("INFRA_ADMIN");
@@ -245,6 +265,66 @@ export function PipelineBuilder({
     }
     void apiCall((client) => client.listVersions(pipeline.id)).then(setVersions).catch(() => setVersions([]));
   }, [apiCall, pipeline?.id]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setDebouncedPaletteQuery(paletteQuery.trim().toLowerCase());
+    }, 180);
+    return () => window.clearTimeout(timer);
+  }, [paletteQuery]);
+
+  useEffect(() => {
+    try {
+      const stored = sessionStorage.getItem(PALETTE_TREE_STATE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored) as Record<string, boolean>;
+        setExpandedPaletteTree(parsed);
+      }
+    } catch {
+      // Ignore malformed session state.
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(PALETTE_TREE_STATE_KEY, JSON.stringify(expandedPaletteTree));
+    } catch {
+      // Ignore storage failures.
+    }
+  }, [expandedPaletteTree]);
+
+  useEffect(() => {
+    setSearchScrollTop(0);
+    if (searchScrollRef.current) {
+      searchScrollRef.current.scrollTop = 0;
+    }
+  }, [debouncedPaletteQuery]);
+
+  const stageCatalogEntries = useMemo(() => buildStageCatalogEntries(templates), [templates]);
+  const stageTree = useMemo(() => buildStageTree(stageCatalogEntries), [stageCatalogEntries]);
+  const stageSearchResults = useMemo(
+    () => filterStageEntries(stageCatalogEntries, debouncedPaletteQuery),
+    [stageCatalogEntries, debouncedPaletteQuery],
+  );
+
+  useEffect(() => {
+    if (stageTree.length === 0) {
+      return;
+    }
+    setExpandedPaletteTree((previous) => {
+      if (Object.keys(previous).length > 0) {
+        return previous;
+      }
+      const defaults: Record<string, boolean> = {};
+      for (const category of stageTree) {
+        defaults[category.id] = true;
+        for (const subcategory of category.subcategories) {
+          defaults[subcategory.id] = true;
+        }
+      }
+      return defaults;
+    });
+  }, [stageTree]);
 
   const selectedStage = useMemo(
     () => spec.stages.find((stage) => stage.stage_id === selectedStageId) ?? null,
@@ -404,12 +484,98 @@ export function PipelineBuilder({
       params: {},
     };
 
+    const isDatasetTemplate = templateId.startsWith("builtin.dataset_");
     setSpec((prev) => ({
       ...prev,
+      data_model: isDatasetTemplate ? "dataset" : (prev.data_model ?? "samples"),
+      execution_mode:
+        isDatasetTemplate && prev.execution_mode === "streaming"
+          ? "batch"
+          : prev.execution_mode,
       stages: [...prev.stages, stage],
     }));
     setSelectedStageId(nextId);
   };
+
+  const togglePaletteBranch = (branchId: string) => {
+    setExpandedPaletteTree((previous) => ({
+      ...previous,
+      [branchId]: !(previous[branchId] ?? true),
+    }));
+  };
+
+  const isSearchMode = debouncedPaletteQuery.length > 0;
+  const totalSearchRows = stageSearchResults.length;
+
+  const searchWindow = useMemo(() => {
+    const viewportHeight = searchScrollRef.current?.clientHeight ?? 340;
+    const visibleRows = Math.ceil(viewportHeight / SEARCH_ROW_HEIGHT) + SEARCH_OVERSCAN * 2;
+    const startIndex = Math.max(0, Math.floor(searchScrollTop / SEARCH_ROW_HEIGHT) - SEARCH_OVERSCAN);
+    const endIndex = Math.min(totalSearchRows, startIndex + visibleRows);
+    const offsetTop = startIndex * SEARCH_ROW_HEIGHT;
+    const offsetBottom = Math.max(0, (totalSearchRows - endIndex) * SEARCH_ROW_HEIGHT);
+    return {
+      startIndex,
+      endIndex,
+      offsetTop,
+      offsetBottom,
+      rows: stageSearchResults.slice(startIndex, endIndex),
+    };
+  }, [searchScrollTop, stageSearchResults, totalSearchRows]);
+
+  const renderStageName = (value: string) => {
+    if (!isSearchMode) {
+      return value;
+    }
+    const highlighted = highlightMatch(value, debouncedPaletteQuery);
+    if (highlighted.length === 1 && !highlighted[0]?.matched) {
+      return value;
+    }
+    return highlighted.map((part, index) =>
+      part.matched ? (
+        <mark key={`${value}-${index}`} className="rounded bg-amber-100 px-0.5 text-[var(--color-text)]">
+          {part.text}
+        </mark>
+      ) : (
+        <span key={`${value}-${index}`}>{part.text}</span>
+      ),
+    );
+  };
+
+  const renderPaletteStageItem = (entry: StageCatalogEntry, nested: boolean) => (
+    <button
+      key={`${entry.id}-${nested ? "nested" : "result"}`}
+      draggable
+      onDragStart={(event) => {
+        event.dataTransfer.effectAllowed = "copy";
+        event.dataTransfer.setData("pipelineforge/template", entry.template.id);
+      }}
+      onDoubleClick={() => addTemplateStage(entry.template.id)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          addTemplateStage(entry.template.id);
+        }
+      }}
+      className={`w-full rounded-lg border border-dashed border-[var(--color-card-border)] bg-white px-3 py-2 text-left transition hover:border-[var(--flow-orange)] hover:bg-orange-50 ${
+        nested ? "pl-4" : ""
+      }`}
+      title={`${entry.template.name} • ${entry.pathLabel}`}
+      aria-label={`Drag ${entry.template.name} from ${entry.pathLabel} to canvas or press enter to add`}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-medium text-[var(--color-text)]">{renderStageName(entry.template.name)}</p>
+          <p className="truncate text-[11px] text-[var(--color-muted)]">{entry.template.id}</p>
+        </div>
+        <Plus className="mt-0.5 h-4 w-4 shrink-0 text-[var(--color-muted)]" />
+      </div>
+      {entry.template.description ? (
+        <p className="mt-1 line-clamp-2 text-xs text-[var(--color-muted)]">{entry.template.description}</p>
+      ) : null}
+      {!nested ? <p className="mt-1 text-[11px] text-[var(--color-muted)]">{entry.pathLabel}</p> : null}
+    </button>
+  );
 
   const removeStage = (stageId: string) => {
     setSpec((prev) => ({
@@ -669,6 +835,7 @@ export function PipelineBuilder({
               <p className="text-xs uppercase tracking-[0.15em] text-[var(--color-muted)]">Pipeline</p>
               <h2 className="mt-1 text-base font-semibold text-[var(--color-text)]">{spec.name || "Untitled Pipeline"}</h2>
               <div className="mt-2 flex flex-wrap items-center gap-2">
+                <Badge label={(spec.data_model ?? "samples").toUpperCase()} />
                 <Badge label={spec.execution_mode.toUpperCase()} />
                 <Badge label={`${spec.stages.length} stage${spec.stages.length === 1 ? "" : "s"}`} />
                 <Badge label={`${spec.edges.length} relation${spec.edges.length === 1 ? "" : "s"}`} />
@@ -679,6 +846,22 @@ export function PipelineBuilder({
               <label className="space-y-1">
                 <span className="text-[11px] uppercase tracking-[0.14em] text-[var(--color-muted)]">Name</span>
                 <Input value={spec.name} onChange={(e) => setSpec({ ...spec, name: e.target.value })} className="h-8 bg-white" />
+              </label>
+              <label className="space-y-1">
+                <span className="text-[11px] uppercase tracking-[0.14em] text-[var(--color-muted)]">Data Model</span>
+                <select
+                  className="h-8 w-full rounded-md border border-[var(--color-card-border)] bg-white px-3 text-sm"
+                  value={spec.data_model ?? "samples"}
+                  onChange={(e) =>
+                    setSpec({
+                      ...spec,
+                      data_model: e.target.value as PipelineSpecDocument["data_model"],
+                    })
+                  }
+                >
+                  <option value="samples">Samples</option>
+                  <option value="dataset">Dataset</option>
+                </select>
               </label>
               <label className="space-y-1">
                 <span className="text-[11px] uppercase tracking-[0.14em] text-[var(--color-muted)]">Execution</span>
@@ -712,29 +895,120 @@ export function PipelineBuilder({
                 <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--color-muted)]">Stage Palette</p>
                 <span className="text-xs text-[var(--color-muted)]">drag / double click</span>
               </div>
-              <div className="max-h-[370px] space-y-2 overflow-auto pr-1">
-                {templates.map((template) => (
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2 top-2.5 h-4 w-4 text-[var(--color-muted)]" />
+                <Input
+                  value={paletteQuery}
+                  onChange={(event) => setPaletteQuery(event.target.value)}
+                  placeholder="Search stages, tags, or category path"
+                  className="h-9 bg-white pl-8 pr-8"
+                  aria-label="Search stage templates"
+                />
+                {paletteQuery ? (
                   <button
-                    key={template.id}
-                    draggable
-                    onDragStart={(event) => {
-                      event.dataTransfer.setData("xenna/template", template.id);
-                    }}
-                    onDoubleClick={() => addTemplateStage(template.id)}
-                    className="w-full rounded-lg border border-dashed border-[var(--color-card-border)] bg-white px-3 py-2 text-left transition hover:border-[var(--flow-orange)] hover:bg-orange-50"
+                    type="button"
+                    onClick={() => setPaletteQuery("")}
+                    className="absolute right-2 top-2 rounded p-0.5 text-[var(--color-muted)] transition hover:bg-slate-100"
+                    aria-label="Clear stage search"
+                    title="Clear search"
                   >
-                    <div className="flex items-start justify-between gap-2">
-                      <div>
-                        <p className="text-sm font-medium text-[var(--color-text)]">{template.name}</p>
-                        <p className="text-xs text-[var(--color-muted)]">{template.id}</p>
-                      </div>
-                      <Plus className="mt-0.5 h-4 w-4 text-[var(--color-muted)]" />
-                    </div>
-                    {template.description ? <p className="mt-1 text-xs text-[var(--color-muted)]">{template.description}</p> : null}
+                    <X className="h-4 w-4" />
                   </button>
-                ))}
-                {templates.length === 0 ? <p className="text-sm text-[var(--color-muted)]">No stage templates available.</p> : null}
+                ) : null}
               </div>
+
+              {isSearchMode ? (
+                <div className="mt-2 rounded-xl border border-[var(--flow-panel-border)] bg-white/80 p-2">
+                  <div className="mb-2 flex items-center justify-between">
+                    <p className="text-[11px] uppercase tracking-[0.14em] text-[var(--color-muted)]">Search Results</p>
+                    <Badge label={`${stageSearchResults.length}`} />
+                  </div>
+                  <div
+                    ref={searchScrollRef}
+                    onScroll={(event) => {
+                      setSearchScrollTop(event.currentTarget.scrollTop);
+                    }}
+                    className="max-h-[340px] overflow-auto pr-1"
+                  >
+                    {stageSearchResults.length === 0 ? (
+                      <p className="rounded-lg border border-dashed border-[var(--color-card-border)] bg-[var(--color-surface)] px-3 py-4 text-sm text-[var(--color-muted)]">
+                        No stages match this search. Try another keyword or clear the filter.
+                      </p>
+                    ) : (
+                      <div className="space-y-2" style={{ paddingTop: searchWindow.offsetTop, paddingBottom: searchWindow.offsetBottom }}>
+                        {searchWindow.rows.map((entry) => renderPaletteStageItem(entry, false))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div role="tree" aria-label="Stage templates by category" className="mt-2 max-h-[370px] space-y-2 overflow-auto pr-1">
+                  {stageTree.map((category) => {
+                    const categoryExpanded = expandedPaletteTree[category.id] ?? true;
+                    return (
+                      <section key={category.id} className="rounded-lg border border-[var(--flow-panel-border)] bg-white/85">
+                        <button
+                          type="button"
+                          onClick={() => togglePaletteBranch(category.id)}
+                          className="flex w-full items-center justify-between px-2 py-2"
+                          aria-expanded={categoryExpanded}
+                          aria-label={`${categoryExpanded ? "Collapse" : "Expand"} ${category.name}`}
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <ChevronRight
+                              className={`h-4 w-4 text-[var(--color-muted)] transition ${categoryExpanded ? "rotate-90" : ""}`}
+                            />
+                            <span className="truncate text-sm font-semibold text-[var(--color-text)]" title={category.name}>
+                              {category.name}
+                            </span>
+                          </span>
+                          <Badge label={`${category.count}`} />
+                        </button>
+
+                        {categoryExpanded ? (
+                          <div className="space-y-1 px-2 pb-2">
+                            {category.subcategories.map((subcategory) => {
+                              const subcategoryExpanded = expandedPaletteTree[subcategory.id] ?? true;
+                              return (
+                                <div key={subcategory.id} className="rounded-md border border-[var(--flow-panel-border)] bg-[var(--color-surface)]/70">
+                                  <button
+                                    type="button"
+                                    onClick={() => togglePaletteBranch(subcategory.id)}
+                                    className="flex w-full items-center justify-between px-2 py-1.5"
+                                    aria-expanded={subcategoryExpanded}
+                                    aria-label={`${subcategoryExpanded ? "Collapse" : "Expand"} ${subcategory.name}`}
+                                  >
+                                    <span className="flex min-w-0 items-center gap-1.5">
+                                      <ChevronRight
+                                        className={`h-3.5 w-3.5 text-[var(--color-muted)] transition ${
+                                          subcategoryExpanded ? "rotate-90" : ""
+                                        }`}
+                                      />
+                                      <span className="truncate text-xs font-medium text-[var(--color-text)]" title={subcategory.name}>
+                                        {subcategory.name}
+                                      </span>
+                                    </span>
+                                    <span className="text-[11px] text-[var(--color-muted)]">{subcategory.count}</span>
+                                  </button>
+
+                                  {subcategoryExpanded ? (
+                                    <div className="space-y-1 px-1 pb-1">
+                                      {subcategory.stages.map((entry) => renderPaletteStageItem(entry, true))}
+                                    </div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        ) : null}
+                      </section>
+                    );
+                  })}
+                  {stageTree.length === 0 ? (
+                    <p className="text-sm text-[var(--color-muted)]">No stage templates available.</p>
+                  ) : null}
+                </div>
+              )}
             </div>
           </aside>
 
@@ -802,7 +1076,7 @@ export function PipelineBuilder({
               onDragOver={(event) => event.preventDefault()}
               onDrop={(event) => {
                 event.preventDefault();
-                const templateId = event.dataTransfer.getData("xenna/template");
+                const templateId = event.dataTransfer.getData("pipelineforge/template");
                 if (templateId) {
                   addTemplateStage(templateId);
                 }
@@ -888,7 +1162,7 @@ export function PipelineBuilder({
                             onDragOver={(event) => event.preventDefault()}
                             onDrop={(event) => {
                               event.preventDefault();
-                              const dragged = event.dataTransfer.getData("xenna/stage");
+                              const dragged = event.dataTransfer.getData("pipelineforge/stage");
                               if (dragged) {
                                 reorderStage(dragged, stage.stage_id);
                               }
@@ -945,7 +1219,7 @@ export function PipelineBuilder({
                                   draggable
                                   onDragStart={(event) => {
                                     event.stopPropagation();
-                                    event.dataTransfer.setData("xenna/stage", stage.stage_id);
+                                    event.dataTransfer.setData("pipelineforge/stage", stage.stage_id);
                                   }}
                                   className="rounded-md p-1 text-[var(--color-muted)] transition hover:bg-slate-100"
                                   title="Drag to reorder"
@@ -1245,25 +1519,19 @@ export function PipelineBuilder({
         </CardHeader>
         <CardContent>
           <pre className="max-h-[280px] overflow-auto rounded-md bg-[#111827] p-3 text-xs text-slate-100">
-{`from cosmos_xenna.pipelines import v1 as pipelines_v1
-
-# Fill stage implementations and imports
-stages = [
+{`# Submit this payload to POST /api/v1/pipelines/{pipeline_id}/versions
+spec = {
+  "execution_mode": "${spec.execution_mode}",
+  "stages": [
 ${spec.stages
   .map(
     (stage) =>
-      `    pipelines_v1.StageSpec(${stage.python_import_path ? `${stage.python_import_path.split(":").at(-1)}()` : "MyStage()"}),`
+      `    {"stage_id": "${stage.stage_id}", "name": "${stage.name}", "stage_template": "${stage.stage_template ?? "builtin.identity"}"},`
   )
   .join("\n")}
-]
-
-pipeline_spec = pipelines_v1.PipelineSpec(
-    input_data=[],
-    stages=stages,
-    config=pipelines_v1.PipelineConfig(execution_mode=pipelines_v1.ExecutionMode.${spec.execution_mode.toUpperCase()}),
-)
-
-outputs = pipelines_v1.run_pipeline(pipeline_spec)
+  ],
+  "edges": ${JSON.stringify(spec.edges, null, 2)},
+}
 `}
           </pre>
         </CardContent>

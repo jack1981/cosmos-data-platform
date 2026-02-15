@@ -24,7 +24,9 @@ def get_password_hash(password: str) -> str:
     return pwd_context.hash(password)
 
 
-def _create_token(subject: str, token_type: str, expires_delta_minutes: int, extra_claims: dict[str, Any] | None = None) -> str:
+def _create_token(
+    subject: str, token_type: str, expires_delta_minutes: int, extra_claims: dict[str, Any] | None = None
+) -> str:
     settings = get_settings()
     now = datetime.now(timezone.utc)
     payload: dict[str, Any] = {

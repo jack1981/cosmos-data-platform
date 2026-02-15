@@ -29,8 +29,8 @@ def _spec(name: str, second_template: str) -> dict:
 
 
 def test_version_diff_and_publish_flow(client) -> None:
-    dev_headers = _login(client, "dev@xenna.local", "Dev123!")
-    admin_headers = _login(client, "admin@xenna.local", "Admin123!")
+    dev_headers = _login(client, "dev@pipelineforge.local", "Dev123!")
+    admin_headers = _login(client, "admin@pipelineforge.local", "Admin123!")
 
     pipeline_resp = client.post(
         "/api/v1/pipelines",

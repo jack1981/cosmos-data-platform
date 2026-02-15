@@ -46,6 +46,7 @@ export type PipelineSpecDocument = {
   tags: string[];
   owners: string[];
   team_ids: string[];
+  data_model?: "samples" | "dataset";
   execution_mode: "streaming" | "batch" | "serving";
   stages: StageDefinition[];
   edges: { source: string; target: string }[];
@@ -54,7 +55,10 @@ export type PipelineSpecDocument = {
     sink: { kind: "none" | "queue" | "artifact_uri"; uri?: string | null };
   };
   runtime: {
+    ray_mode?: "local" | "k8s" | null;
     ray_address?: string | null;
+    work_dir?: string | null;
+    storage_options?: Record<string, unknown>;
     autoscaling: Record<string, unknown>;
     retry_policy: Record<string, unknown>;
   };

@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Cable, LayoutList, PanelLeftClose, Shield } from "lucide-react";
+import { Cable, Home, LayoutList, PanelLeftClose, Shield } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/components/auth/auth-provider";
 
 const navItems = [
+  { href: "/", label: "Home", icon: Home },
   { href: "/pipelines", label: "Pipelines", icon: Cable },
   { href: "/runs", label: "Runs", icon: LayoutList },
   { href: "/admin", label: "Admin", icon: Shield, adminOnly: true },
@@ -24,8 +25,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         <aside className="border-r border-[var(--color-card-border)] bg-[linear-gradient(165deg,var(--color-nav)_0%,#0f2831_65%,#10242a_100%)] px-4 py-5 text-white">
           <div className="mb-6 flex items-center justify-between rounded-lg border border-white/15 bg-black/20 px-3 py-2">
             <div>
-              <p className="text-xs uppercase tracking-[0.2em] text-cyan-200">Cosmos-Xenna</p>
-              <p className="text-sm font-semibold">Management Plane</p>
+              <p className="text-sm font-semibold text-cyan-50">Management Plane</p>
             </div>
             <PanelLeftClose className="h-4 w-4 text-cyan-200" />
           </div>

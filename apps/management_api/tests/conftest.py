@@ -10,11 +10,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 os.environ.setdefault("DATABASE_URL", "sqlite+pysqlite:///./management_api_test.db")
 os.environ.setdefault("SECRET_KEY", "test-secret-key")
-os.environ.setdefault("DEFAULT_ADMIN_EMAIL", "admin@xenna.local")
+os.environ.setdefault("DEFAULT_ADMIN_EMAIL", "admin@pipelineforge.local")
 os.environ.setdefault("DEFAULT_ADMIN_PASSWORD", "Admin123!")
-os.environ.setdefault("DEFAULT_DEV_EMAIL", "dev@xenna.local")
+os.environ.setdefault("DEFAULT_DEV_EMAIL", "dev@pipelineforge.local")
 os.environ.setdefault("DEFAULT_DEV_PASSWORD", "Dev123!")
-os.environ.setdefault("DEFAULT_AIOPS_EMAIL", "aiops@xenna.local")
+os.environ.setdefault("DEFAULT_AIOPS_EMAIL", "aiops@pipelineforge.local")
 os.environ.setdefault("DEFAULT_AIOPS_PASSWORD", "Aiops123!")
 
 from app.db.base import Base

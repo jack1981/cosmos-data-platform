@@ -1,0 +1,59 @@
+name: pipelineforge
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-pipelineforge}
+      POSTGRES_USER: ${POSTGRES_USER:-pipelineforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-pipelineforge}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pipelineforge} -d ${POSTGRES_DB:-pipelineforge}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  api:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.api
+    image: ${API_IMAGE:-pipelineforge/api:local}
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-pipelineforge}:${POSTGRES_PASSWORD:-pipelineforge}@postgres:5432/${POSTGRES_DB:-pipelineforge}
+      SECRET_KEY: ${SECRET_KEY:-replace-with-random-secret}
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-cuWRV_El44bUKXOBlIqg1uDM7mtgXAQQizK1tvkKF1c=}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
+      RAY_MODE: ${RAY_MODE:-local}
+      RAY_ADDRESS: ${RAY_ADDRESS:-auto}
+      PIPELINEFORGE_DATASET_STORAGE_OPTIONS_JSON: ${PIPELINEFORGE_DATASET_STORAGE_OPTIONS_JSON:-}
+      DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-admin@pipelineforge.local}
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-Admin123!}
+      DEFAULT_DEV_EMAIL: ${DEFAULT_DEV_EMAIL:-dev@pipelineforge.local}
+      DEFAULT_DEV_PASSWORD: ${DEFAULT_DEV_PASSWORD:-Dev123!}
+      DEFAULT_AIOPS_EMAIL: ${DEFAULT_AIOPS_EMAIL:-aiops@pipelineforge.local}
+      DEFAULT_AIOPS_PASSWORD: ${DEFAULT_AIOPS_PASSWORD:-Aiops123!}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+
+  web:
+    build:
+      context: .
+      dockerfile: deployment/docker/Dockerfile.web
+    image: ${WEB_IMAGE:-pipelineforge/web:local}
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000/api/v1}
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+volumes:
+  postgres_data:

@@ -26,8 +26,8 @@ type AuthContextValue = {
   apiCall: <T>(operation: (client: ApiClient) => Promise<T>) => Promise<T>;
 };
 
-const ACCESS_TOKEN_KEY = "xenna_access_token";
-const REFRESH_TOKEN_KEY = "xenna_refresh_token";
+const ACCESS_TOKEN_KEY = "pipelineforge_access_token";
+const REFRESH_TOKEN_KEY = "pipelineforge_refresh_token";
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 

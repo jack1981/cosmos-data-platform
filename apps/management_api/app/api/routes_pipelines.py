@@ -9,7 +9,6 @@ from sqlalchemy.orm import Session
 from app.api.deps import CurrentUser, get_current_user
 from app.db.session import get_db
 from app.models import (
-    AccessLevel,
     Pipeline,
     PipelineShare,
     PipelineVersion,
@@ -88,7 +87,11 @@ def list_pipelines(
     db: Session = Depends(get_db),
     current_user: CurrentUser = Depends(get_current_user),
 ) -> list[PipelineRead]:
-    candidates = db.execute(select(Pipeline).where(Pipeline.is_deleted.is_(False)).order_by(Pipeline.updated_at.desc())).scalars().all()
+    candidates = (
+        db.execute(select(Pipeline).where(Pipeline.is_deleted.is_(False)).order_by(Pipeline.updated_at.desc()))
+        .scalars()
+        .all()
+    )
     visible: list[Pipeline] = []
 
     for pipeline in candidates:
@@ -261,7 +264,9 @@ def create_draft_version(
     pipeline = assert_pipeline_write_access(db, current_user.context, pipeline_id)
 
     next_version = (
-        db.execute(select(func.max(PipelineVersion.version_number)).where(PipelineVersion.pipeline_id == pipeline_id)).scalar_one()
+        db.execute(
+            select(func.max(PipelineVersion.version_number)).where(PipelineVersion.pipeline_id == pipeline_id)
+        ).scalar_one()
         or 0
     ) + 1
 
@@ -299,11 +304,15 @@ def list_versions(
     current_user: CurrentUser = Depends(get_current_user),
 ) -> list[PipelineVersionRead]:
     assert_pipeline_access(db, current_user.context, pipeline_id, write=False)
-    versions = db.execute(
-        select(PipelineVersion)
-        .where(PipelineVersion.pipeline_id == pipeline_id)
-        .order_by(PipelineVersion.version_number.desc())
-    ).scalars().all()
+    versions = (
+        db.execute(
+            select(PipelineVersion)
+            .where(PipelineVersion.pipeline_id == pipeline_id)
+            .order_by(PipelineVersion.version_number.desc())
+        )
+        .scalars()
+        .all()
+    )
     return [_version_to_read(row) for row in versions]
 
 
@@ -466,9 +475,15 @@ def publish_version(
     if version.status == PipelineVersionStatus.REJECTED:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Rejected versions cannot be published")
 
-    current_active = db.execute(
-        select(PipelineVersion).where(PipelineVersion.pipeline_id == pipeline_id, PipelineVersion.is_active.is_(True))
-    ).scalars().all()
+    current_active = (
+        db.execute(
+            select(PipelineVersion).where(
+                PipelineVersion.pipeline_id == pipeline_id, PipelineVersion.is_active.is_(True)
+            )
+        )
+        .scalars()
+        .all()
+    )
     for row in current_active:
         row.is_active = False
 

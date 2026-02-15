@@ -1,14 +1,32 @@
 from __future__ import annotations
 
-import json
+import logging
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.security import get_password_hash
-from app.models import Pipeline, PipelineVersion, PipelineVersionStatus, Role, RoleName, Team, TeamMember, User, UserRole
+from app.models import (
+    Pipeline,
+    PipelineVersion,
+    PipelineVersionStatus,
+    Role,
+    RoleName,
+    Team,
+    TeamMember,
+    User,
+    UserRole,
+)
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Identity + Access seeding
+# ---------------------------------------------------------------------------
 
 
 def _get_or_create_role(db: Session, role_name: RoleName, description: str) -> Role:
@@ -59,152 +77,152 @@ def _ensure_team_member(db: Session, team_id: str, user_id: str) -> None:
     db.add(TeamMember(team_id=team_id, user_id=user_id))
 
 
+# ---------------------------------------------------------------------------
+# Starter pipeline templates
+# ---------------------------------------------------------------------------
+
+
 def _make_linear_edges(stage_ids: list[str]) -> list[dict[str, str]]:
     return [{"source": stage_ids[idx], "target": stage_ids[idx + 1]} for idx in range(len(stage_ids) - 1)]
 
 
-def _seed_template_specs() -> list[dict]:
-    template_1_stages = [
-        {
-            "stage_id": "download",
-            "name": "Download Videos",
-            "stage_template": "builtin.video_download",
-            "resources": {"cpus": 1.0, "gpus": 0.0},
-            "batch_size": 10,
-            "concurrency_hint": 4,
-            "retries": 1,
-            "params": {
-                "url_field": "video_url",
-                "output_field": "video_bytes",
-                "timeout_seconds": 3.0,
-                "max_bytes": 2_097_152,
+_ARTIFACT_ROOT = "/tmp/pipelineforge_artifacts"
+
+
+def _stage_download(*, max_bytes: int = 2_097_152, timeout_seconds: float = 3.0) -> dict[str, Any]:
+    return {
+        "stage_id": "download",
+        "name": "Download Videos",
+        "stage_template": "builtin.video_download",
+        "resources": {"cpus": 1.0, "gpus": 0.0},
+        "batch_size": 10,
+        "concurrency_hint": 4,
+        "retries": 1,
+        "params": {
+            "url_field": "video_url",
+            "output_field": "video_bytes",
+            "timeout_seconds": timeout_seconds,
+            "max_bytes": max_bytes,
+        },
+    }
+
+
+def _stage_caption(*, model_name: str = "demo-vlm-mini") -> dict[str, Any]:
+    return {
+        "stage_id": "caption",
+        "name": "Caption Videos",
+        "stage_template": "builtin.video_caption",
+        "resources": {"cpus": 1.0, "gpus": 1.0},
+        "batch_size": 5,
+        "concurrency_hint": 2,
+        "retries": 0,
+        "params": {"input_bytes_field": "video_bytes", "caption_field": "caption", "model_name": model_name},
+    }
+
+
+def _stage_quality_gate() -> dict[str, Any]:
+    return {
+        "stage_id": "quality_gate",
+        "name": "Quality Gate",
+        "stage_template": "builtin.video_quality_gate",
+        "resources": {"cpus": 1.0, "gpus": 0.0},
+        "batch_size": 10,
+        "concurrency_hint": 2,
+        "retries": 0,
+        "params": {
+            "min_bytes": 65_536,
+            "min_confidence": 0.8,
+            "allow_simulated_downloads": True,
+            "drop_failed": False,
+        },
+    }
+
+
+def _stage_incident() -> dict[str, Any]:
+    return {
+        "stage_id": "incident_enrich",
+        "name": "Incident Enrichment",
+        "stage_template": "builtin.video_incident_enrich",
+        "resources": {"cpus": 1.0, "gpus": 0.0},
+        "batch_size": 10,
+        "concurrency_hint": 2,
+        "retries": 0,
+        "params": {
+            "text_fields": ["caption", "ops_hint", "camera_id", "location"],
+            "output_field": "incident",
+        },
+    }
+
+
+def _stage_writer(path_suffix: str) -> dict[str, Any]:
+    return {
+        "stage_id": "writer",
+        "name": "Write Artifact",
+        "stage_template": "builtin.video_writer",
+        "resources": {"cpus": 1.0, "gpus": 0.0},
+        "batch_size": 10,
+        "concurrency_hint": 2,
+        "retries": 0,
+        "params": {
+            "output_path": f"{_ARTIFACT_ROOT}/{path_suffix}",
+            "drop_output": True,
+        },
+    }
+
+
+def _template_spec(
+    *,
+    pipeline_id: str,
+    name: str,
+    description: str,
+    tags: list[str],
+    stages: list[dict[str, Any]],
+    source_data: list[dict[str, Any]],
+    sink_path: str,
+    datasets: list[str],
+    models: list[str],
+) -> dict[str, Any]:
+    return {
+        "pipeline_id": pipeline_id,
+        "name": name,
+        "description": description,
+        "tags": tags,
+        "owners": [],
+        "team_ids": [],
+        "execution_mode": "batch",
+        "stages": stages,
+        "edges": _make_linear_edges([stage["stage_id"] for stage in stages]),
+        "io": {
+            "source": {
+                "kind": "inline",
+                "static_data": source_data,
             },
+            "sink": {"kind": "artifact_uri", "uri": f"file://{_ARTIFACT_ROOT}/{sink_path}"},
         },
-        {
-            "stage_id": "caption",
-            "name": "Caption Videos",
-            "stage_template": "builtin.video_caption",
-            "resources": {"cpus": 1.0, "gpus": 1.0},
-            "batch_size": 5,
-            "concurrency_hint": 2,
-            "retries": 0,
-            "params": {"input_bytes_field": "video_bytes", "caption_field": "caption", "model_name": "demo-vlm-mini"},
-        },
-        {
-            "stage_id": "writer",
-            "name": "Write Caption Manifest",
-            "stage_template": "builtin.video_writer",
-            "resources": {"cpus": 1.0, "gpus": 0.0},
-            "batch_size": 10,
-            "concurrency_hint": 4,
-            "retries": 0,
-            "params": {
-                "output_path": "/tmp/xenna_artifacts/template_video_caption_batch.jsonl",
-                "drop_output": True,
-            },
-        },
+        "runtime": {"ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
+        "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
+        "metadata_links": {"datasets": datasets, "models": models},
+    }
+
+
+def _seed_template_specs() -> list[dict[str, Any]]:
+    caption_stages = [_stage_download(), _stage_caption(), _stage_writer("template_video_caption_batch.jsonl")]
+    quality_stages = [
+        _stage_download(max_bytes=1_572_864, timeout_seconds=2.5),
+        _stage_caption(),
+        _stage_quality_gate(),
+        _stage_writer("template_video_quality_review.jsonl"),
+    ]
+    incident_stages = [
+        _stage_download(max_bytes=1_572_864, timeout_seconds=2.5),
+        _stage_caption(),
+        _stage_incident(),
+        _stage_writer("template_video_incident_triage.jsonl"),
     ]
 
-    template_2_stages = [
+    video_templates = [
         {
-            "stage_id": "download",
-            "name": "Download Videos",
-            "stage_template": "builtin.video_download",
-            "resources": {"cpus": 1.0, "gpus": 0.0},
-            "batch_size": 10,
-            "concurrency_hint": 4,
-            "retries": 1,
-            "params": {"timeout_seconds": 2.5, "max_bytes": 1_572_864},
-        },
-        {
-            "stage_id": "caption",
-            "name": "Caption Videos",
-            "stage_template": "builtin.video_caption",
-            "resources": {"cpus": 1.0, "gpus": 1.0},
-            "batch_size": 5,
-            "concurrency_hint": 2,
-            "retries": 0,
-            "params": {"model_name": "demo-vlm-mini"},
-        },
-        {
-            "stage_id": "quality_gate",
-            "name": "Quality Gate",
-            "stage_template": "builtin.video_quality_gate",
-            "resources": {"cpus": 1.0, "gpus": 0.0},
-            "batch_size": 10,
-            "concurrency_hint": 2,
-            "retries": 0,
-            "params": {
-                "min_bytes": 65_536,
-                "min_confidence": 0.8,
-                "allow_simulated_downloads": True,
-                "drop_failed": False,
-            },
-        },
-        {
-            "stage_id": "writer",
-            "name": "Write QC Manifest",
-            "stage_template": "builtin.video_writer",
-            "resources": {"cpus": 1.0, "gpus": 0.0},
-            "batch_size": 10,
-            "concurrency_hint": 2,
-            "retries": 0,
-            "params": {"output_path": "/tmp/xenna_artifacts/template_video_qc_review.jsonl", "drop_output": True},
-        },
-    ]
-
-    template_3_stages = [
-        {
-            "stage_id": "download",
-            "name": "Download Videos",
-            "stage_template": "builtin.video_download",
-            "resources": {"cpus": 1.0, "gpus": 0.0},
-            "batch_size": 10,
-            "concurrency_hint": 4,
-            "retries": 1,
-            "params": {"timeout_seconds": 2.5, "max_bytes": 1_572_864},
-        },
-        {
-            "stage_id": "caption",
-            "name": "Caption Videos",
-            "stage_template": "builtin.video_caption",
-            "resources": {"cpus": 1.0, "gpus": 1.0},
-            "batch_size": 5,
-            "concurrency_hint": 2,
-            "retries": 0,
-            "params": {"model_name": "demo-vlm-mini"},
-        },
-        {
-            "stage_id": "incident_enrich",
-            "name": "Incident Enrichment",
-            "stage_template": "builtin.video_incident_enrich",
-            "resources": {"cpus": 1.0, "gpus": 0.0},
-            "batch_size": 10,
-            "concurrency_hint": 2,
-            "retries": 0,
-            "params": {
-                "text_fields": ["caption", "ops_hint", "camera_id", "location"],
-                "output_field": "incident",
-            },
-        },
-        {
-            "stage_id": "writer",
-            "name": "Write Incident Manifest",
-            "stage_template": "builtin.video_writer",
-            "resources": {"cpus": 1.0, "gpus": 0.0},
-            "batch_size": 10,
-            "concurrency_hint": 1,
-            "retries": 0,
-            "params": {
-                "output_path": "/tmp/xenna_artifacts/template_video_incident_triage.jsonl",
-                "drop_output": True,
-            },
-        },
-    ]
-
-    return [
-        {
-            "external_id": "template_text_uppercase_batch",
+            "external_id": "template_video_caption_batch",
             "name": "Template: Video Caption Batch",
             "description": "Download videos, caption them, and write a caption manifest artifact.",
             "execution_mode": "batch",
@@ -214,49 +232,39 @@ def _seed_template_specs() -> list[dict]:
                 "datasets": ["dataset://demo/video-surveillance"],
                 "models": ["model://demo/vlm-mini"],
             },
-            "spec": {
-                "pipeline_id": "template_video_caption_batch",
-                "name": "Template: Video Caption Batch",
-                "description": "Video pipeline example similar to Download -> Caption -> Writer.",
-                "tags": ["template", "starter", "video", "batch"],
-                "owners": [],
-                "team_ids": [],
-                "execution_mode": "batch",
-                "stages": template_1_stages,
-                "edges": _make_linear_edges([stage["stage_id"] for stage in template_1_stages]),
-                "io": {
-                    "source": {
-                        "kind": "inline",
-                        "static_data": [
-                            {
-                                "video_id": "cam-001",
-                                "video_url": "https://samplelib.com/lib/preview/mp4/sample-5s.mp4",
-                                "camera_id": "dock-01",
-                                "caption_uri": "s3://xenna-demo/captions/cam-001.json",
-                            },
-                            {
-                                "video_id": "cam-002",
-                                "video_url": "https://samplelib.com/lib/preview/mp4/sample-10s.mp4",
-                                "camera_id": "dock-02",
-                                "caption_uri": "s3://xenna-demo/captions/cam-002.json",
-                            },
-                            {
-                                "video_id": "cam-003",
-                                "video_url": "s3://xenna-demo/raw/cam-003.mp4",
-                                "camera_id": "dock-03",
-                                "caption_uri": "s3://xenna-demo/captions/cam-003.json",
-                            },
-                        ],
+            "spec": _template_spec(
+                pipeline_id="template_video_caption_batch",
+                name="Template: Video Caption Batch",
+                description="Video pipeline example: Download -> Caption -> Writer.",
+                tags=["template", "starter", "video", "batch"],
+                stages=caption_stages,
+                source_data=[
+                    {
+                        "video_id": "cam-001",
+                        "video_url": "https://samplelib.com/lib/preview/mp4/sample-5s.mp4",
+                        "camera_id": "dock-01",
+                        "caption_uri": "s3://pipelineforge-demo/captions/cam-001.json",
                     },
-                    "sink": {"kind": "artifact_uri", "uri": "file:///tmp/xenna_artifacts/template_video_caption_batch.jsonl"},
-                },
-                "runtime": {"ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
-                "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
-                "metadata_links": {"datasets": ["dataset://demo/video-surveillance"], "models": ["model://demo/vlm-mini"]},
-            },
+                    {
+                        "video_id": "cam-002",
+                        "video_url": "https://samplelib.com/lib/preview/mp4/sample-10s.mp4",
+                        "camera_id": "dock-02",
+                        "caption_uri": "s3://pipelineforge-demo/captions/cam-002.json",
+                    },
+                    {
+                        "video_id": "cam-003",
+                        "video_url": "s3://pipelineforge-demo/raw/cam-003.mp4",
+                        "camera_id": "dock-03",
+                        "caption_uri": "s3://pipelineforge-demo/captions/cam-003.json",
+                    },
+                ],
+                sink_path="template_video_caption_batch.jsonl",
+                datasets=["dataset://demo/video-surveillance"],
+                models=["model://demo/vlm-mini"],
+            ),
         },
         {
-            "external_id": "template_dict_field_transform_streaming",
+            "external_id": "template_video_quality_review",
             "name": "Template: Video Quality Review",
             "description": "Run captioning with quality checks and keep pass/fail reasons in output.",
             "execution_mode": "batch",
@@ -266,109 +274,530 @@ def _seed_template_specs() -> list[dict]:
                 "datasets": ["dataset://demo/video-quality"],
                 "models": ["model://demo/vlm-mini"],
             },
-            "spec": {
-                "pipeline_id": "template_video_quality_review",
-                "name": "Template: Video Quality Review",
-                "description": "Download + caption + quality gate + writer pipeline.",
-                "tags": ["template", "starter", "video", "quality"],
-                "owners": [],
-                "team_ids": [],
-                "execution_mode": "batch",
-                "stages": template_2_stages,
-                "edges": _make_linear_edges([stage["stage_id"] for stage in template_2_stages]),
-                "io": {
-                    "source": {
-                        "kind": "inline",
-                        "static_data": [
-                            {
-                                "video_id": "qc-001",
-                                "video_url": "https://filesamples.com/samples/video/mp4/sample_640x360.mp4",
-                                "camera_id": "line-a",
-                                "ops_hint": "normal loading activity",
-                            },
-                            {
-                                "video_id": "qc-002",
-                                "video_url": "https://example.invalid/unreachable-video.mp4",
-                                "camera_id": "line-b",
-                                "ops_hint": "night shift low light",
-                            },
-                            {
-                                "video_id": "qc-003",
-                                "video_url": "s3://xenna-demo/raw/qc-003.mp4",
-                                "camera_id": "line-c",
-                                "ops_hint": "forklift crossing",
-                            },
-                        ],
+            "spec": _template_spec(
+                pipeline_id="template_video_quality_review",
+                name="Template: Video Quality Review",
+                description="Download + caption + quality gate + writer pipeline.",
+                tags=["template", "starter", "video", "quality"],
+                stages=quality_stages,
+                source_data=[
+                    {
+                        "video_id": "qc-001",
+                        "video_url": "https://filesamples.com/samples/video/mp4/sample_640x360.mp4",
+                        "camera_id": "line-a",
+                        "ops_hint": "normal loading activity",
                     },
-                    "sink": {"kind": "artifact_uri", "uri": "file:///tmp/xenna_artifacts/template_video_qc_review.jsonl"},
-                },
-                "runtime": {"ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
-                "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
-                "metadata_links": {"datasets": ["dataset://demo/video-quality"], "models": ["model://demo/vlm-mini"]},
-            },
+                    {
+                        "video_id": "qc-002",
+                        "video_url": "https://example.invalid/unreachable-video.mp4",
+                        "camera_id": "line-b",
+                        "ops_hint": "night shift low light",
+                    },
+                    {
+                        "video_id": "qc-003",
+                        "video_url": "s3://pipelineforge-demo/raw/qc-003.mp4",
+                        "camera_id": "line-c",
+                        "ops_hint": "forklift crossing",
+                    },
+                ],
+                sink_path="template_video_quality_review.jsonl",
+                datasets=["dataset://demo/video-quality"],
+                models=["model://demo/vlm-mini"],
+            ),
         },
         {
-            "external_id": "template_aiops_signal_filter",
+            "external_id": "template_video_incident_triage",
             "name": "Template: Video Incident Triage",
-            "description": "AIOps-focused video triage with severity tagging and incident recommendations.",
+            "description": "Operationally-focused video triage with severity tagging and recommendations.",
             "execution_mode": "batch",
-            "tags": ["template", "starter", "video", "aiops"],
+            "tags": ["template", "starter", "video", "ops"],
             "metadata_links": {
                 "is_template": True,
                 "datasets": ["dataset://demo/video-incidents"],
                 "models": ["model://demo/vlm-mini"],
             },
-            "spec": {
-                "pipeline_id": "template_video_incident_triage",
-                "name": "Template: Video Incident Triage",
-                "description": "Download + caption + incident enrichment + writer pipeline.",
-                "tags": ["template", "starter", "video", "aiops"],
-                "owners": [],
-                "team_ids": [],
-                "execution_mode": "batch",
-                "stages": template_3_stages,
-                "edges": _make_linear_edges([stage["stage_id"] for stage in template_3_stages]),
-                "io": {
-                    "source": {
-                        "kind": "inline",
-                        "static_data": [
-                            {
-                                "video_id": "inc-001",
-                                "video_url": "https://samplelib.com/lib/preview/mp4/sample-5s.mp4",
-                                "camera_id": "north-yard",
-                                "location": "north-yard",
-                                "ops_hint": "possible smoke near loading dock",
-                            },
-                            {
-                                "video_id": "inc-002",
-                                "video_url": "s3://xenna-demo/raw/inc-002.mp4",
-                                "camera_id": "warehouse-aisle-4",
-                                "location": "aisle-4",
-                                "ops_hint": "forklift collision crash reported",
-                            },
-                            {
-                                "video_id": "inc-003",
-                                "video_url": "https://samplelib.com/lib/preview/mp4/sample-10s.mp4",
-                                "camera_id": "east-fence",
-                                "location": "east-fence",
-                                "ops_hint": "intrusion alert near perimeter fence",
-                            },
-                        ],
+            "spec": _template_spec(
+                pipeline_id="template_video_incident_triage",
+                name="Template: Video Incident Triage",
+                description="Download + caption + incident enrichment + writer pipeline.",
+                tags=["template", "starter", "video", "ops"],
+                stages=incident_stages,
+                source_data=[
+                    {
+                        "video_id": "inc-001",
+                        "video_url": "https://samplelib.com/lib/preview/mp4/sample-5s.mp4",
+                        "camera_id": "north-yard",
+                        "location": "north-yard",
+                        "ops_hint": "possible smoke near loading dock",
                     },
-                    "sink": {
-                        "kind": "artifact_uri",
-                        "uri": "file:///tmp/xenna_artifacts/template_video_incident_triage.jsonl",
+                    {
+                        "video_id": "inc-002",
+                        "video_url": "s3://pipelineforge-demo/raw/inc-002.mp4",
+                        "camera_id": "warehouse-aisle-4",
+                        "location": "aisle-4",
+                        "ops_hint": "forklift collision crash reported",
                     },
-                },
-                "runtime": {"ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
-                "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
-                "metadata_links": {"datasets": ["dataset://demo/video-incidents"], "models": ["model://demo/vlm-mini"]},
-            },
+                    {
+                        "video_id": "inc-003",
+                        "video_url": "https://samplelib.com/lib/preview/mp4/sample-10s.mp4",
+                        "camera_id": "east-fence",
+                        "location": "east-fence",
+                        "ops_hint": "intrusion alert near perimeter fence",
+                    },
+                ],
+                sink_path="template_video_incident_triage.jsonl",
+                datasets=["dataset://demo/video-incidents"],
+                models=["model://demo/vlm-mini"],
+            ),
         },
     ]
+    return [*video_templates, *_seed_datafiner_template_specs()]
 
 
-def _spec_json_changed(current: dict, desired: dict) -> bool:
+def _datafiner_template_spec(
+    *,
+    pipeline_id: str,
+    name: str,
+    description: str,
+    stage_templates: list[tuple[str, str, str, dict[str, Any]]],
+    sink_path: str,
+) -> dict[str, Any]:
+    stages = [
+        {
+            "stage_id": stage_id,
+            "name": stage_name,
+            "stage_template": stage_template,
+            "resources": {"cpus": 1.0, "gpus": 0.0},
+            "batch_size": 1,
+            "concurrency_hint": 1,
+            "retries": 0,
+            "params": params,
+        }
+        for stage_id, stage_name, stage_template, params in stage_templates
+    ]
+
+    return {
+        "pipeline_id": pipeline_id,
+        "name": name,
+        "description": description,
+        "tags": ["template", "starter", "dataset", "datafiner", "compatibility"],
+        "owners": [],
+        "team_ids": [],
+        "data_model": "dataset",
+        "execution_mode": "batch",
+        "stages": stages,
+        "edges": _make_linear_edges([stage["stage_id"] for stage in stages]),
+        "io": {
+            "source": {"kind": "dataset_uri", "uri": "file:///tmp/pipelineforge_artifacts/datafiner_input.lance"},
+            "sink": {"kind": "artifact_uri", "uri": f"file://{_ARTIFACT_ROOT}/{sink_path}"},
+        },
+        "runtime": {"ray_mode": "local", "ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
+        "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
+        "metadata_links": {
+            "datasets": ["dataset://pipelineforge/datafiner-compatibility"],
+            "models": ["model://compatibility/fasttext", "model://compatibility/seq-classifier"],
+        },
+    }
+
+
+def _text_pretraining_curation_spec() -> dict[str, Any]:
+    """Build the DAG spec for the multi-source text pre-training curation
+    pipeline.  Five corpus readers fan-in to a concat stage, then flow
+    linearly through scoring, filtering, dedup, ranking, mixing, and sampling.
+    """
+
+    def _stage(
+        stage_id: str, name: str, template: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "stage_id": stage_id,
+            "name": name,
+            "stage_template": template,
+            "resources": {"cpus": 1.0, "gpus": 0.0},
+            "batch_size": 1,
+            "concurrency_hint": 1,
+            "retries": 0,
+            "params": params,
+        }
+
+    # --- corpus readers (one per source Lance file) ---
+    corpus_names = [
+        ("dclm", "corpus_dclm"),
+        ("fineweb", "corpus_fineweb"),
+        ("fineweb-edu-zh", "corpus_fineweb_edu_zh"),
+        ("the-stack", "corpus_the_stack"),
+        ("megamath", "corpus_megamath"),
+    ]
+    reader_stage_ids: list[str] = []
+    reader_stages: list[dict[str, Any]] = []
+    for source_name, file_stem in corpus_names:
+        sid = f"reader_{file_stem}"
+        reader_stage_ids.append(sid)
+        reader_stages.append(
+            _stage(
+                sid,
+                f"Read {source_name}",
+                "builtin.datafiner_lance_reader",
+                {"uri": f"file://{_ARTIFACT_ROOT}/{file_stem}.lance"},
+            )
+        )
+
+    # --- concat + linear processing stages ---
+    processing_stages = [
+        _stage("concat", "Concat Corpora", "builtin.datafiner_concat", {}),
+        _stage(
+            "token_counter", "Token Counter", "builtin.datafiner_token_counter_v2",
+            {"text_column": "text", "output_column": "token_count"},
+        ),
+        _stage(
+            "length_filter", "Length Filter", "builtin.datafiner_filter",
+            {"predicate": "token_count >= 5"},
+        ),
+        _stage(
+            "quality_scorer", "Quality Scorer", "builtin.datafiner_fasttext_scorer",
+            {
+                "text_column": "text",
+                "score_column": "quality_score",
+                "label_column": "quality_label",
+                "labels": ["low_quality", "high_quality"],
+            },
+        ),
+        _stage(
+            "quality_filter", "Quality Filter", "builtin.datafiner_fasttext_filter",
+            {"score_column": "quality_score", "min_score": 0.4},
+        ),
+        _stage(
+            "domain_scorer", "Domain Scorer", "builtin.datafiner_seq_classifier_scorer",
+            {
+                "text_column": "text",
+                "labels": ["stem", "humanities", "social_science", "other"],
+                "output_prefix": "mmlu",
+            },
+        ),
+        _stage(
+            "dedup", "MinHash Dedup", "builtin.datafiner_minhash",
+            {"text_column": "text", "deduplicate": True, "num_hashes": 16, "shingle_size": 3},
+        ),
+        _stage(
+            "rank_quantile", "Rank Quantile", "builtin.datafiner_add_rank_quantile",
+            {
+                "score_column": "quality_score",
+                "quantiles": 10,
+                "rank_column": "quality_rank",
+                "quantile_column": "quality_quantile",
+            },
+        ),
+        _stage(
+            "interleave", "Balanced Mix", "builtin.datafiner_interleaved_reorder",
+            {"group_by": ["source"]},
+        ),
+        _stage(
+            "final_sample", "Final Sample", "builtin.datafiner_sampler",
+            {"fraction": 0.75, "seed": 42},
+        ),
+        _stage("writer", "Write Output", "builtin.datafiner_lance_writer", {}),
+    ]
+
+    all_stages = reader_stages + processing_stages
+
+    # --- edges: fan-in from readers to concat, then linear ---
+    edges: list[dict[str, str]] = []
+    for rid in reader_stage_ids:
+        edges.append({"source": rid, "target": "concat"})
+    linear_ids = [s["stage_id"] for s in processing_stages]
+    for i in range(len(linear_ids) - 1):
+        edges.append({"source": linear_ids[i], "target": linear_ids[i + 1]})
+
+    return {
+        "pipeline_id": "template_text_pretraining_curation",
+        "name": "Template: Text Pre-Training Dataset Curation",
+        "description": "5-source ingest + concat + token count + quality score/filter + domain classify + MinHash dedup + rank quantile + balanced mix + sample + write.",
+        "tags": ["template", "starter", "datafiner", "dataset", "pretraining", "curation", "ml"],
+        "owners": [],
+        "team_ids": [],
+        "data_model": "dataset",
+        "execution_mode": "batch",
+        "stages": all_stages,
+        "edges": edges,
+        "io": {
+            "source": {"kind": "dataset_uri", "uri": f"file://{_ARTIFACT_ROOT}/corpus_dclm.lance"},
+            "sink": {"kind": "artifact_uri", "uri": f"file://{_ARTIFACT_ROOT}/template_text_pretraining_curation.lance"},
+        },
+        "runtime": {"ray_mode": "local", "ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
+        "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
+        "metadata_links": {
+            "datasets": ["dataset://pipelineforge/datafiner-compatibility"],
+            "models": ["model://compatibility/fasttext", "model://compatibility/seq-classifier"],
+        },
+    }
+
+
+def _seed_datafiner_template_specs() -> list[dict[str, Any]]:
+    datafiner_templates: list[dict[str, Any]] = [
+        {
+            "external_id": "template_datafiner_read_write",
+            "name": "Template: Datafiner Read Write",
+            "description": "Minimal read->write dataset flow for compatibility validation.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "io"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_read_write",
+                name="Template: Datafiner Read Write",
+                description="Read and write Lance datasets.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_read_write.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_filter",
+            "name": "Template: Datafiner Filter",
+            "description": "Dataset filtering with ratio and predicate operators.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "filter"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_filter",
+                name="Template: Datafiner Filter",
+                description="Apply filter and filter-by-ratio operators.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("filter", "Filter", "builtin.datafiner_filter", {"predicate": "score >= 0.5"}),
+                    ("ratio", "FilterByRatio", "builtin.datafiner_filter_by_ratio", {"keep_ratio": 0.5, "seed": 7}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_filter.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_shuffle",
+            "name": "Template: Datafiner Shuffle",
+            "description": "Reorder and sample dataset records for curriculum mixing.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "ordering"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_shuffle",
+                name="Template: Datafiner Shuffle",
+                description="Reorder/interleave and sample records.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("reorder", "Reorder", "builtin.datafiner_reorder", {"by": ["source_id"]}),
+                    (
+                        "interleave",
+                        "InterleavedReorder",
+                        "builtin.datafiner_interleaved_reorder",
+                        {"group_by": ["source_id"]},
+                    ),
+                    ("sampler", "Sampler", "builtin.datafiner_sampler", {"fraction": 0.8, "seed": 11}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_shuffle.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_dedup",
+            "name": "Template: Datafiner Dedup",
+            "description": "MinHash and scoring based deduplication flow.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "dedup"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_dedup",
+                name="Template: Datafiner Dedup",
+                description="Deduplicate records with MinHash and score thresholds.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("minhash", "MinHash", "builtin.datafiner_minhash", {"text_column": "text", "deduplicate": True}),
+                    (
+                        "score",
+                        "FastTextScorer",
+                        "builtin.datafiner_fasttext_scorer",
+                        {"text_column": "text", "score_column": "fasttext_score"},
+                    ),
+                    (
+                        "filter",
+                        "FastTextFilter",
+                        "builtin.datafiner_fasttext_filter",
+                        {"score_column": "fasttext_score", "min_score": 0.35},
+                    ),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_dedup.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_group_reorder",
+            "name": "Template: Datafiner Group Reorder",
+            "description": "Grouping, flattening, and interleaving for balanced mixes.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "grouping"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_group_reorder",
+                name="Template: Datafiner Group Reorder",
+                description="Group flatten + interleaved reorder.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("group_flatten", "GroupFlatten", "builtin.datafiner_group_flatten", {"group_by": ["source_id"]}),
+                    (
+                        "interleave",
+                        "InterleavedReorder",
+                        "builtin.datafiner_interleaved_reorder",
+                        {"group_by": ["source_id"]},
+                    ),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_group_reorder.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_fasttext",
+            "name": "Template: Datafiner FastText",
+            "description": "FastText-style scoring and quantile enrichment.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "ml"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_fasttext",
+                name="Template: Datafiner FastText",
+                description="Score text and add rank quantiles.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("tokens", "TokenCounter_v2", "builtin.datafiner_token_counter_v2", {"text_column": "text"}),
+                    ("scorer", "FastTextScorer", "builtin.datafiner_fasttext_scorer", {"text_column": "text"}),
+                    (
+                        "rank",
+                        "AddRankQuantile",
+                        "builtin.datafiner_add_rank_quantile",
+                        {"score_column": "fasttext_score", "quantiles": 10},
+                    ),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_fasttext.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_seq_classifier",
+            "name": "Template: Datafiner Seq Classifier",
+            "description": "Sequence classifier style scoring flow.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "ml"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_seq_classifier",
+                name="Template: Datafiner Seq Classifier",
+                description="Generate sequence classifier labels and confidence.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    (
+                        "seq",
+                        "SeqClassifierScorer",
+                        "builtin.datafiner_seq_classifier_scorer",
+                        {"text_column": "text", "labels": ["negative", "neutral", "positive"]},
+                    ),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_seq_classifier.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_mmlu_fasttext",
+            "name": "Template: Datafiner MMLU FastText",
+            "description": "Compatibility template for MMLU-style fasttext ranking.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "mmlu", "ml"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_mmlu_fasttext",
+                name="Template: Datafiner MMLU FastText",
+                description="Score and sample top quantile records.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("scorer", "FastTextScorer", "builtin.datafiner_fasttext_scorer", {"text_column": "question"}),
+                    (
+                        "rank",
+                        "AddRankQuantile",
+                        "builtin.datafiner_add_rank_quantile",
+                        {"score_column": "fasttext_score", "quantiles": 4},
+                    ),
+                    ("selector", "Selector", "builtin.datafiner_selector", {"limit": 100}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_mmlu_fasttext.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_vis",
+            "name": "Template: Datafiner Visualizer",
+            "description": "Schema + statistics + visual preview compatibility flow.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "inspection"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_vis",
+                name="Template: Datafiner Visualizer",
+                description="Inspect schema/statistics and emit preview artifacts.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("schema", "Schema", "builtin.datafiner_schema", {}),
+                    ("stat", "Stat", "builtin.datafiner_stat", {}),
+                    ("visualizer", "Visualizer", "builtin.datafiner_visualizer", {"limit": 10}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_vis.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_sample",
+            "name": "Template: Datafiner Sample",
+            "description": "Sampling, duplication, and flatten operators in one flow.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "sampling"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_sample",
+                name="Template: Datafiner Sample",
+                description="Sampler + duplicate ratio + flatten pipeline.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("sampler", "Sampler", "builtin.datafiner_sampler", {"fraction": 0.3, "seed": 17}),
+                    (
+                        "dup",
+                        "DuplicateSampleRatio",
+                        "builtin.datafiner_duplicate_sample_ratio",
+                        {"ratio": 1.5, "seed": 17},
+                    ),
+                    ("flatten", "Flatten", "builtin.datafiner_flatten", {"column": "items"}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_sample.lance",
+            ),
+        },
+        {
+            "external_id": "template_text_pretraining_curation",
+            "name": "Template: Text Pre-Training Dataset Curation",
+            "description": "Multi-source text curation pipeline: 5-corpus ingest, concat, score, classify, deduplicate, bucket, mix, and sample.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "pretraining", "curation", "ml"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _text_pretraining_curation_spec(),
+        },
+    ]
+    return datafiner_templates
+
+
+# ---------------------------------------------------------------------------
+# Pipeline/template persistence
+# ---------------------------------------------------------------------------
+
+
+def _spec_json_changed(current: dict[str, Any], desired: dict[str, Any]) -> bool:
+    import json
+
     current_norm = json.dumps(current, sort_keys=True, separators=(",", ":"))
     desired_norm = json.dumps(desired, sort_keys=True, separators=(",", ":"))
     return current_norm != desired_norm
@@ -379,7 +808,7 @@ def _ensure_template_pipeline(
     *,
     owner_user_id: str,
     owner_team_id: str,
-    template: dict,
+    template: dict[str, Any],
 ) -> None:
     pipeline = db.execute(select(Pipeline).where(Pipeline.external_id == template["external_id"])).scalar_one_or_none()
 
@@ -420,7 +849,9 @@ def _ensure_template_pipeline(
         active_version.is_active = False
 
     next_version = (
-        db.execute(select(func.max(PipelineVersion.version_number)).where(PipelineVersion.pipeline_id == pipeline.id)).scalar_one()
+        db.execute(
+            select(func.max(PipelineVersion.version_number)).where(PipelineVersion.pipeline_id == pipeline.id)
+        ).scalar_one()
         or 0
     ) + 1
     version = PipelineVersion(
@@ -434,6 +865,11 @@ def _ensure_template_pipeline(
         published_at=publish_time,
     )
     db.add(version)
+
+
+# ---------------------------------------------------------------------------
+# Public seed entrypoint
+# ---------------------------------------------------------------------------
 
 
 def seed_defaults(db: Session) -> None:
@@ -464,6 +900,14 @@ def seed_defaults(db: Session) -> None:
     default_team = _get_or_create_team(db, "platform-team", "Default shared team for local development")
     _ensure_team_member(db, default_team.id, dev_user.id)
     _ensure_team_member(db, default_team.id, aiops_user.id)
+
+    # Prepare the local sample Lance dataset that datafiner templates reference.
+    try:
+        from app.services.prepare_local_sample import prepare_local_sample
+
+        prepare_local_sample()
+    except Exception:
+        logger.warning("Could not prepare local sample dataset; datafiner pipelines may fail", exc_info=True)
 
     for template in _seed_template_specs():
         _ensure_template_pipeline(

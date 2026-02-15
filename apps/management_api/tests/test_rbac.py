@@ -9,8 +9,8 @@ def _login(client, email: str, password: str) -> dict[str, str]:
 
 
 def test_aiops_cannot_edit_pipeline_definition(client) -> None:
-    dev_headers = _login(client, "dev@xenna.local", "Dev123!")
-    aiops_headers = _login(client, "aiops@xenna.local", "Aiops123!")
+    dev_headers = _login(client, "dev@pipelineforge.local", "Dev123!")
+    aiops_headers = _login(client, "aiops@pipelineforge.local", "Aiops123!")
 
     create_resp = client.post(
         "/api/v1/pipelines",

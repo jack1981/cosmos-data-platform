@@ -1,8 +1,10 @@
 .git
 .github
-.venv
-.venv-notebook
 .vscode
+
+.venv
+.venv-management
+.venv-notebook
 __pycache__
 *.pyc
 *.pyo
@@ -13,16 +15,15 @@ __pycache__
 node_modules
 **/node_modules
 apps/web/.next
-apps/management_api/.pytest_cache
-.pytest_cache
+**/.next
+**/tsconfig.tsbuildinfo
 
-tests
-docs
+.pytest_cache
+.ruff_cache
 
 target
-output
 build
 dist
+output
 
 .env
-deployment/.env

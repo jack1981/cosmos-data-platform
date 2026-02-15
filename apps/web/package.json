@@ -1,12 +1,13 @@
 {
-  "name": "cosmos-xenna-web",
+  "name": "pipelineforge-web",
   "version": "0.1.0",
   "private": true,
   "scripts": {
     "dev": "next dev -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
-    "lint": "next lint"
+    "lint": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.15",
@@ -26,6 +27,7 @@
     "@types/react": "19.1.8",
     "@types/react-dom": "19.1.6",
     "tailwindcss": "^4.1.12",
-    "typescript": "5.8.3"
+    "typescript": "5.8.3",
+    "vitest": "^2.1.9"
   }
 }

@@ -15,6 +15,17 @@ def test_video_templates_are_registered() -> None:
     assert "builtin.video_writer" in ids
 
 
+def test_dataset_templates_are_registered() -> None:
+    ids = {item["id"] for item in list_templates()}
+    assert "builtin.dataset_lance_reader" in ids
+    assert "builtin.dataset_filter" in ids
+    assert "builtin.dataset_column_select" in ids
+    assert "builtin.dataset_shuffle" in ids
+    assert "builtin.dataset_union_by_name" in ids
+    assert "builtin.dataset_join" in ids
+    assert "builtin.dataset_lance_writer" in ids
+
+
 def test_video_template_chain_runs_successfully(tmp_path) -> None:
     output_path = tmp_path / "video_pipeline_output.jsonl"
     stages = [

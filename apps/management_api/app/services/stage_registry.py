@@ -6,11 +6,20 @@ import json
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, ClassVar
 
 import httpx
 
 from app.schemas.pipeline_spec import StageDefinition
+from app.services.dataset_stages import (
+    ColumnSelectStage,
+    FilterStage,
+    JoinStage,
+    LanceReaderStage,
+    LanceWriterStage,
+    ShufflerStage,
+    UnionByNameStage,
+)
 
 
 @dataclass
@@ -150,7 +159,7 @@ class BuiltinVideoDownload:
             url,
             timeout=self.timeout_seconds,
             follow_redirects=True,
-            headers={"User-Agent": "cosmos-xenna-management-plane/1.0"},
+            headers={"User-Agent": "pipelineforge-management-plane/1.0"},
         )
         response.raise_for_status()
         content = response.content or b""
@@ -302,8 +311,8 @@ class BuiltinVideoQualityGate:
 
 
 class BuiltinVideoIncidentEnricher:
-    _PRIORITY = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
-    _DEFAULT_RULES = {
+    _PRIORITY: ClassVar[dict[str, int]] = {"LOW": 0, "MEDIUM": 1, "HIGH": 2, "CRITICAL": 3}
+    _DEFAULT_RULES: ClassVar[dict[str, str]] = {
         "fire": "CRITICAL",
         "smoke": "HIGH",
         "crash": "HIGH",
@@ -343,9 +352,7 @@ class BuiltinVideoIncidentEnricher:
             incident = {
                 "severity": severity,
                 "keywords": matches,
-                "recommended_action": (
-                    "page-oncall" if severity in {"HIGH", "CRITICAL"} else "create-ticket"
-                ),
+                "recommended_action": ("page-oncall" if severity in {"HIGH", "CRITICAL"} else "create-ticket"),
             }
             record[self.output_field] = incident
             record["alert_required"] = severity in {"HIGH", "CRITICAL"}
@@ -356,7 +363,7 @@ class BuiltinVideoIncidentEnricher:
 class BuiltinVideoWriter:
     def __init__(
         self,
-        output_path: str = "/tmp/xenna_artifacts/video_pipeline_output.jsonl",
+        output_path: str = "/tmp/pipelineforge_artifacts/video_pipeline_output.jsonl",
         drop_output: bool = True,
         include_payload_bytes: bool = False,
         **_: Any,
@@ -371,7 +378,7 @@ class BuiltinVideoWriter:
             target.parent.mkdir(parents=True, exist_ok=True)
             return target
         except OSError:
-            fallback = Path("/tmp/xenna_artifacts/video_pipeline_output.jsonl")
+            fallback = Path("/tmp/pipelineforge_artifacts/video_pipeline_output.jsonl")
             fallback.parent.mkdir(parents=True, exist_ok=True)
             return fallback
 
@@ -406,6 +413,13 @@ _TEMPLATE_REGISTRY: dict[str, type] = {
     "builtin.video_quality_gate": BuiltinVideoQualityGate,
     "builtin.video_incident_enrich": BuiltinVideoIncidentEnricher,
     "builtin.video_writer": BuiltinVideoWriter,
+    "builtin.dataset_lance_reader": LanceReaderStage,
+    "builtin.dataset_filter": FilterStage,
+    "builtin.dataset_column_select": ColumnSelectStage,
+    "builtin.dataset_shuffle": ShufflerStage,
+    "builtin.dataset_union_by_name": UnionByNameStage,
+    "builtin.dataset_join": JoinStage,
+    "builtin.dataset_lance_writer": LanceWriterStage,
 }
 
 _TEMPLATE_METADATA: dict[str, dict[str, str]] = {
@@ -445,6 +459,34 @@ _TEMPLATE_METADATA: dict[str, dict[str, str]] = {
         "name": "Video Writer",
         "description": "Write pipeline outputs to JSONL artifact files for auditing and replay.",
     },
+    "builtin.dataset_lance_reader": {
+        "name": "Dataset Lance Reader",
+        "description": "Read a Lance dataset URI into the dataset-mode DAG pipeline.",
+    },
+    "builtin.dataset_filter": {
+        "name": "Dataset Filter",
+        "description": "Filter rows using a Daft predicate or column/op/value parameters.",
+    },
+    "builtin.dataset_column_select": {
+        "name": "Dataset Column Select",
+        "description": "Project a subset of columns from the upstream dataset.",
+    },
+    "builtin.dataset_shuffle": {
+        "name": "Dataset Shuffle",
+        "description": "Shuffle/sampler stage for dataset-mode preprocessing flows.",
+    },
+    "builtin.dataset_union_by_name": {
+        "name": "Dataset Union By Name",
+        "description": "Union multiple upstream datasets by aligned column names.",
+    },
+    "builtin.dataset_join": {
+        "name": "Dataset Join",
+        "description": "Join multiple upstream datasets with Daft join semantics.",
+    },
+    "builtin.dataset_lance_writer": {
+        "name": "Dataset Lance Writer",
+        "description": "Materialize dataset output to a Lance URI.",
+    },
 }
 
 
@@ -459,6 +501,12 @@ def list_templates() -> list[dict[str, Any]]:
         }
         for template_id in sorted(_TEMPLATE_REGISTRY.keys())
     ]
+
+
+def get_template_class(template_id: str) -> type[Any]:
+    if template_id not in _TEMPLATE_REGISTRY:
+        raise ValueError(f"Unknown stage template: {template_id}")
+    return _TEMPLATE_REGISTRY[template_id]
 
 
 def _load_dynamic_stage(python_import_path: str, params: dict[str, Any]) -> Any:

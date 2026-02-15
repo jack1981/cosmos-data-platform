@@ -20,7 +20,6 @@ from app.models.enums import (
     RoleName,
 )
 
-
 JsonType = JSON().with_variant(JSONB, "postgresql")
 
 
@@ -110,7 +109,9 @@ class PipelineVersion(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     pipeline_id: Mapped[str] = mapped_column(String(36), ForeignKey("pipelines.id", ondelete="CASCADE"), index=True)
     version_number: Mapped[int] = mapped_column(Integer)
-    status: Mapped[PipelineVersionStatus] = mapped_column(Enum(PipelineVersionStatus), default=PipelineVersionStatus.DRAFT)
+    status: Mapped[PipelineVersionStatus] = mapped_column(
+        Enum(PipelineVersionStatus), default=PipelineVersionStatus.DRAFT
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     spec_json: Mapped[dict[str, Any]] = mapped_column(JsonType)
     change_summary: Mapped[str] = mapped_column(Text, default="")
@@ -141,7 +142,9 @@ class PipelineRun(Base):
     pipeline_version_id: Mapped[str] = mapped_column(
         String(36), ForeignKey("pipeline_versions.id", ondelete="RESTRICT"), index=True
     )
-    status: Mapped[PipelineRunStatus] = mapped_column(Enum(PipelineRunStatus), default=PipelineRunStatus.QUEUED, index=True)
+    status: Mapped[PipelineRunStatus] = mapped_column(
+        Enum(PipelineRunStatus), default=PipelineRunStatus.QUEUED, index=True
+    )
     execution_mode: Mapped[str] = mapped_column(String(32), default="streaming")
     trigger_type: Mapped[str] = mapped_column(String(64), default="manual")
     initiated_by: Mapped[str] = mapped_column(String(36), ForeignKey("users.id"), index=True)
@@ -211,7 +214,9 @@ class RetentionPolicy(Base):
     __tablename__ = "retention_policies"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    pipeline_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=True)
+    pipeline_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("pipelines.id", ondelete="CASCADE"), nullable=True
+    )
     run_days: Mapped[int] = mapped_column(Integer, default=30)
     log_days: Mapped[int] = mapped_column(Integer, default=14)
     event_days: Mapped[int] = mapped_column(Integer, default=30)
@@ -236,8 +241,12 @@ class Incident(Base):
     __tablename__ = "incidents"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    pipeline_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("pipelines.id", ondelete="SET NULL"), nullable=True)
-    run_id: Mapped[str | None] = mapped_column(String(36), ForeignKey("pipeline_runs.id", ondelete="SET NULL"), nullable=True)
+    pipeline_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("pipelines.id", ondelete="SET NULL"), nullable=True
+    )
+    run_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("pipeline_runs.id", ondelete="SET NULL"), nullable=True
+    )
     title: Mapped[str] = mapped_column(String(255))
     severity: Mapped[IncidentSeverity] = mapped_column(Enum(IncidentSeverity), default=IncidentSeverity.MEDIUM)
     status: Mapped[IncidentStatus] = mapped_column(Enum(IncidentStatus), default=IncidentStatus.OPEN)

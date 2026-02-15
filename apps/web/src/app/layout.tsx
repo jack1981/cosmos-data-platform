@@ -9,7 +9,7 @@ const bodyFont = IBM_Plex_Sans({ subsets: ["latin"], variable: "--font-body" });
 const displayFont = Space_Grotesk({ subsets: ["latin"], variable: "--font-display" });
 
 export const metadata: Metadata = {
-  title: "Cosmos-Xenna Management Plane",
+  title: "Management Plane",
   description: "Airflow-like control plane for Cosmos-Xenna Ray pipelines",
 };
 
