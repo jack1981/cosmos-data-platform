@@ -62,6 +62,7 @@ class RuntimeConfig(BaseModel):
     storage_options: dict[str, Any] = Field(default_factory=dict)
     autoscaling: dict[str, Any] = Field(default_factory=dict)
     retry_policy: dict[str, Any] = Field(default_factory=dict)
+    distributed_mode: Literal["auto", "always", "never"] = "never"
 
 
 class ObservabilityConfig(BaseModel):

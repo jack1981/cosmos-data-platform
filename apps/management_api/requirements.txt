@@ -16,3 +16,4 @@ ray[client]==2.46.0
 attrs==25.3.0
 daft[lance]==0.6.8
 pylance==0.38.2
+cosmos-xenna>=0.1.7

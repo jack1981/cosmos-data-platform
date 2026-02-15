@@ -134,7 +134,9 @@ def test_dataset_runtime_falls_back_to_native_runner_when_ray_runner_setup_fails
     ctx = types.SimpleNamespace(ray_mode="local", ray_address="auto")
     _maybe_init_ray_and_daft(ctx, logs.append)
 
-    assert ("ray", "auto") in calls
+    # Daft set_runner_ray is called without address arg (Ray already initialized),
+    # then falls back to native when it raises.
+    assert ("ray", None) in calls
     assert ("native", None) in calls
     assert any("fell back to Daft native runner after Ray-runner failure" in line for line in logs)
 

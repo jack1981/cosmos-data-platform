@@ -14,8 +14,10 @@ from app.db.session import SessionLocal
 from app.models import PipelineRun, PipelineRunStatus, PipelineVersion, RunEvent, RunLogsIndex
 from app.schemas.pipeline_spec import PipelineSpecDocument
 from app.services.dataset_executor import run_dataset_pipeline
+from app.services.distributed_executor import run_distributed_pipeline
 from app.services.log_store import run_log_store
 from app.services.stage_registry import build_stage_executor
+from app.services.xenna_adapter import is_xenna_available
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,17 @@ class PipelineRunnerService:
         )
         db.add(event)
 
+    @staticmethod
+    def _should_use_distributed(spec: PipelineSpecDocument) -> bool:
+        """Determine whether to use cosmos_xenna distributed executor."""
+        mode = spec.runtime.distributed_mode
+        if mode == "never":
+            return False
+        if mode == "always":
+            return is_xenna_available()
+        # auto: use distributed if xenna is available and there are multiple stages
+        return is_xenna_available() and len(spec.stages) > 1
+
     def _execute_run(self, run_id: str, cancel_event: threading.Event) -> None:
         db = SessionLocal()
         start_monotonic = time.perf_counter()
@@ -102,9 +115,15 @@ class PipelineRunnerService:
             dataset_output_ref: Any = None
 
             if data_model == "dataset":
-                self._create_event(db, run_id, "execution_mode", "Executed with dataset DAG adapter")
-                self._append_log(run_id, "Executing dataset-mode pipeline")
-                dataset_result = run_dataset_pipeline(spec, lambda msg: self._append_log(run_id, msg))
+                use_distributed = self._should_use_distributed(spec)
+                if use_distributed:
+                    self._create_event(db, run_id, "execution_mode", "Executed with cosmos_xenna distributed executor")
+                    self._append_log(run_id, "Executing dataset-mode pipeline via cosmos_xenna distributed executor")
+                    dataset_result = run_distributed_pipeline(spec, lambda msg: self._append_log(run_id, msg))
+                else:
+                    self._create_event(db, run_id, "execution_mode", "Executed with dataset DAG adapter")
+                    self._append_log(run_id, "Executing dataset-mode pipeline")
+                    dataset_result = run_dataset_pipeline(spec, lambda msg: self._append_log(run_id, msg))
                 stage_metrics = dataset_result.stage_metrics
                 dataset_output_ref = dataset_result.output_ref
                 output_data = []
