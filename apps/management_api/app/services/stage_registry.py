@@ -47,6 +47,18 @@ from app.services.dataset_stages import (
     UnionByPositionStage,
     VisualizerStage,
 )
+from app.services.video_dataset_stages import (
+    VideoAestheticFilterStage,
+    VideoAestheticScorerStage,
+    VideoCaptionEmbeddingStage,
+    VideoCaptionGeneratorStage,
+    VideoClipSplitterStage,
+    VideoClipWriterStage,
+    VideoEmbeddingScorerStage,
+    VideoMetadataReaderStage,
+    VideoMotionFilterStage,
+    VideoMotionScorerStage,
+)
 
 
 @dataclass
@@ -479,6 +491,17 @@ _TEMPLATE_REGISTRY: dict[str, type] = {
     "builtin.datafiner_minhash": MinHashStage,
     "builtin.datafiner_add_rank_quantile": AddRankQuantileStage,
     "builtin.datafiner_token_counter_v2": TokenCounterV2Stage,
+    # Video dataset-mode stages (cosmos_curate port)
+    "builtin.video_dataset_metadata_reader": VideoMetadataReaderStage,
+    "builtin.video_dataset_clip_splitter": VideoClipSplitterStage,
+    "builtin.video_dataset_motion_scorer": VideoMotionScorerStage,
+    "builtin.video_dataset_motion_filter": VideoMotionFilterStage,
+    "builtin.video_dataset_aesthetic_scorer": VideoAestheticScorerStage,
+    "builtin.video_dataset_aesthetic_filter": VideoAestheticFilterStage,
+    "builtin.video_dataset_embedding_scorer": VideoEmbeddingScorerStage,
+    "builtin.video_dataset_caption_generator": VideoCaptionGeneratorStage,
+    "builtin.video_dataset_caption_embedding": VideoCaptionEmbeddingStage,
+    "builtin.video_dataset_clip_writer": VideoClipWriterStage,
 }
 
 _TEMPLATE_METADATA: dict[str, dict[str, str]] = {
@@ -619,6 +642,47 @@ _TEMPLATE_METADATA: dict[str, dict[str, str]] = {
     "builtin.datafiner_token_counter_v2": {
         "name": "TokenCounter_v2",
         "description": "Count text tokens for each row.",
+    },
+    # Video dataset-mode stages (cosmos_curate port)
+    "builtin.video_dataset_metadata_reader": {
+        "name": "Video Metadata Reader",
+        "description": "Read video catalog Lance dataset into the pipeline.",
+    },
+    "builtin.video_dataset_clip_splitter": {
+        "name": "Video Clip Splitter",
+        "description": "Split videos into fixed-duration clips based on duration.",
+    },
+    "builtin.video_dataset_motion_scorer": {
+        "name": "Video Motion Scorer",
+        "description": "Assign deterministic motion score and category to each clip.",
+    },
+    "builtin.video_dataset_motion_filter": {
+        "name": "Video Motion Filter",
+        "description": "Filter clips below a minimum motion score threshold.",
+    },
+    "builtin.video_dataset_aesthetic_scorer": {
+        "name": "Video Aesthetic Scorer",
+        "description": "Assign deterministic aesthetic score and grade to each clip.",
+    },
+    "builtin.video_dataset_aesthetic_filter": {
+        "name": "Video Aesthetic Filter",
+        "description": "Filter clips below a minimum aesthetic score threshold.",
+    },
+    "builtin.video_dataset_embedding_scorer": {
+        "name": "Video Embedding Scorer",
+        "description": "Generate deterministic embedding norm and cluster assignment.",
+    },
+    "builtin.video_dataset_caption_generator": {
+        "name": "Video Caption Generator",
+        "description": "Generate template captions from hash-selected scene/action/setting.",
+    },
+    "builtin.video_dataset_caption_embedding": {
+        "name": "Video Caption Embedding",
+        "description": "Generate deterministic caption embedding norm and dimensions.",
+    },
+    "builtin.video_dataset_clip_writer": {
+        "name": "Video Clip Writer",
+        "description": "Write final video clip Lance output with format metadata.",
     },
 }
 

@@ -199,7 +199,7 @@ def _template_spec(
             },
             "sink": {"kind": "artifact_uri", "uri": f"file://{_ARTIFACT_ROOT}/{sink_path}"},
         },
-        "runtime": {"ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
+        "runtime": {"autoscaling": {}, "retry_policy": {}},
         "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
         "metadata_links": {"datasets": datasets, "models": models},
     }
@@ -391,7 +391,7 @@ def _datafiner_template_spec(
             "source": {"kind": "dataset_uri", "uri": "file:///tmp/pipelineforge_artifacts/datafiner_input.lance"},
             "sink": {"kind": "artifact_uri", "uri": f"file://{_ARTIFACT_ROOT}/{sink_path}"},
         },
-        "runtime": {"ray_mode": "local", "ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
+        "runtime": {"ray_mode": "local", "autoscaling": {}, "retry_policy": {}},
         "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
         "metadata_links": {
             "datasets": ["dataset://pipelineforge/datafiner-compatibility"],
@@ -527,11 +527,109 @@ def _text_pretraining_curation_spec() -> dict[str, Any]:
             "source": {"kind": "dataset_uri", "uri": f"file://{_ARTIFACT_ROOT}/corpus_dclm.lance"},
             "sink": {"kind": "artifact_uri", "uri": f"file://{_ARTIFACT_ROOT}/template_text_pretraining_curation.lance"},
         },
-        "runtime": {"ray_mode": "local", "ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
+        "runtime": {"ray_mode": "local", "autoscaling": {}, "retry_policy": {}},
         "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
         "metadata_links": {
             "datasets": ["dataset://pipelineforge/datafiner-compatibility"],
             "models": ["model://compatibility/fasttext", "model://compatibility/seq-classifier"],
+        },
+    }
+
+
+def _video_curation_pipeline_spec() -> dict[str, Any]:
+    """Build the DAG spec for the video curation pipeline.
+    Three source readers fan-in to concat, then flow linearly through
+    clip splitting, scoring, filtering, embedding, captioning, and writing.
+    """
+
+    def _stage(stage_id: str, name: str, template: str, params: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "stage_id": stage_id,
+            "name": name,
+            "stage_template": template,
+            "resources": {"cpus": 1.0, "gpus": 0.0},
+            "batch_size": 1,
+            "concurrency_hint": 1,
+            "retries": 0,
+            "params": params,
+        }
+
+    # --- video catalog readers (one per source Lance file) ---
+    reader_sources = [
+        ("surveillance", "video_catalog_surveillance"),
+        ("dashcam", "video_catalog_dashcam"),
+        ("drone", "video_catalog_drone"),
+    ]
+    reader_stage_ids: list[str] = []
+    reader_stages: list[dict[str, Any]] = []
+    for source_name, file_stem in reader_sources:
+        sid = f"reader_{source_name}"
+        reader_stage_ids.append(sid)
+        reader_stages.append(
+            _stage(
+                sid,
+                f"Read {source_name}",
+                "builtin.video_dataset_metadata_reader",
+                {"uri": f"file://{_ARTIFACT_ROOT}/{file_stem}.lance"},
+            )
+        )
+
+    # --- concat + linear processing stages ---
+    processing_stages = [
+        _stage("concat", "Concat Sources", "builtin.datafiner_concat", {}),
+        _stage(
+            "clip_splitter", "Clip Splitter", "builtin.video_dataset_clip_splitter",
+            {"clip_duration": 10.0},
+        ),
+        _stage("motion_scorer", "Motion Scorer", "builtin.video_dataset_motion_scorer", {}),
+        _stage(
+            "motion_filter", "Motion Filter", "builtin.video_dataset_motion_filter",
+            {"min_score": 0.15},
+        ),
+        _stage("aesthetic_scorer", "Aesthetic Scorer", "builtin.video_dataset_aesthetic_scorer", {}),
+        _stage(
+            "aesthetic_filter", "Aesthetic Filter", "builtin.video_dataset_aesthetic_filter",
+            {"min_score": 0.3},
+        ),
+        _stage("embedding_scorer", "Embedding Scorer", "builtin.video_dataset_embedding_scorer", {}),
+        _stage("caption_generator", "Caption Generator", "builtin.video_dataset_caption_generator", {}),
+        _stage("caption_embedding", "Caption Embedding", "builtin.video_dataset_caption_embedding", {}),
+        _stage("clip_writer", "Clip Writer", "builtin.video_dataset_clip_writer", {}),
+    ]
+
+    all_stages = reader_stages + processing_stages
+
+    # --- edges: fan-in from readers to concat, then linear ---
+    edges: list[dict[str, str]] = []
+    for rid in reader_stage_ids:
+        edges.append({"source": rid, "target": "concat"})
+    linear_ids = [s["stage_id"] for s in processing_stages]
+    for i in range(len(linear_ids) - 1):
+        edges.append({"source": linear_ids[i], "target": linear_ids[i + 1]})
+
+    return {
+        "pipeline_id": "template_video_curation",
+        "name": "Template: Video Curation Pipeline",
+        "description": (
+            "3-source video ingest + concat + clip split + motion score/filter"
+            " + aesthetic score/filter + embedding + caption + caption embedding + write."
+        ),
+        "tags": ["template", "starter", "video", "dataset", "curation", "cosmos_curate"],
+        "owners": [],
+        "team_ids": [],
+        "data_model": "dataset",
+        "execution_mode": "batch",
+        "stages": all_stages,
+        "edges": edges,
+        "io": {
+            "source": {"kind": "dataset_uri", "uri": f"file://{_ARTIFACT_ROOT}/video_catalog_surveillance.lance"},
+            "sink": {"kind": "artifact_uri", "uri": f"file://{_ARTIFACT_ROOT}/template_video_curation.lance"},
+        },
+        "runtime": {"ray_mode": "local", "autoscaling": {}, "retry_policy": {}},
+        "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
+        "metadata_links": {
+            "datasets": ["dataset://pipelineforge/video-curation"],
+            "models": ["model://cosmos_curate/motion-filter", "model://cosmos_curate/aesthetic-filter"],
         },
     }
 
@@ -792,6 +890,19 @@ def _seed_datafiner_template_specs() -> list[dict[str, Any]]:
             "tags": ["template", "starter", "datafiner", "dataset", "pretraining", "curation", "ml"],
             "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
             "spec": _text_pretraining_curation_spec(),
+        },
+        {
+            "external_id": "template_video_curation",
+            "name": "Template: Video Curation Pipeline",
+            "description": (
+                "Multi-source video curation pipeline: 3-source ingest,"
+                " concat, clip split, motion/aesthetic scoring and filtering,"
+                " embedding, captioning, and output writing."
+            ),
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "video", "dataset", "curation", "cosmos_curate"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/video-curation"},
+            "spec": _video_curation_pipeline_spec(),
         },
     ]
     return datafiner_templates

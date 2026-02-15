@@ -23,6 +23,23 @@ _CORPUS_SPECS: list[tuple[str, int]] = [
     ("megamath", 10_000),
 ]
 
+# ---------------------------------------------------------------------------
+# Video catalog layout — each source gets its own Lance file
+# ---------------------------------------------------------------------------
+
+_VIDEO_CATALOG_SPECS: list[tuple[str, int]] = [
+    ("surveillance", 200),
+    ("dashcam", 150),
+    ("drone", 100),
+    ("studio", 30),
+    ("ugc", 20),
+]
+
+VIDEO_CATALOG_PATHS: dict[str, Path] = {
+    name: _ARTIFACT_ROOT / f"video_catalog_{name}.lance" for name, _ in _VIDEO_CATALOG_SPECS
+}
+VIDEO_CATALOG_COMBINED_PATH = _ARTIFACT_ROOT / "video_catalog.lance"
+
 CORPUS_PATHS: dict[str, Path] = {
     name: _ARTIFACT_ROOT / f"corpus_{name.replace('-', '_')}.lance"
     for name, _ in _CORPUS_SPECS
@@ -325,6 +342,43 @@ def _build_corpus_rows(source: str, count: int, global_offset: int) -> list[dict
     return rows
 
 
+_RESOLUTIONS = [(640, 360), (1280, 720), (1920, 1080), (3840, 2160)]
+_FPS_OPTIONS = [24.0, 30.0, 60.0]
+_CODEC_OPTIONS = ["h264", "hevc", "av1"]
+
+
+def _build_video_catalog_rows(source: str, count: int, global_offset: int) -> list[dict[str, Any]]:
+    """Generate *count* video catalog rows for a single source."""
+    rows: list[dict[str, Any]] = []
+    for local_idx in range(count):
+        idx = global_offset + local_idx
+        res_w, res_h = _RESOLUTIONS[_deterministic_int(idx, "resolution") % len(_RESOLUTIONS)]
+        fps = _FPS_OPTIONS[_deterministic_int(idx, "fps") % len(_FPS_OPTIONS)]
+        codec = _CODEC_OPTIONS[_deterministic_int(idx, "codec") % len(_CODEC_OPTIONS)]
+        duration = round(5.0 + (_deterministic_int(idx, "duration") % 29500) / 100.0, 2)
+        bitrate = 2_500_000 if res_w <= 1280 else 8_000_000
+        file_size = int(duration * bitrate / 8)
+        day_offset = _deterministic_int(idx, "date") % 730
+        upload_date = f"2024-{(day_offset // 30) % 12 + 1:02d}-{day_offset % 28 + 1:02d}"
+
+        rows.append(
+            {
+                "video_id": f"vid-{idx:06d}",
+                "source_uri": f"s3://cosmos-video-demo/{source}/{idx:06d}.mp4",
+                "duration_seconds": duration,
+                "resolution_width": res_w,
+                "resolution_height": res_h,
+                "fps": fps,
+                "codec": codec,
+                "pixel_format": "yuv420p",
+                "file_size_bytes": file_size,
+                "category": source,
+                "upload_date": upload_date,
+            }
+        )
+    return rows
+
+
 def _sample_rows() -> list[dict[str, Any]]:
     """Return all 100,000 rows across every corpus (used for the combined
     backward-compatible Lance file consumed by the 10 existing templates)."""
@@ -353,7 +407,12 @@ def prepare_local_sample(*, force: bool = False) -> Path:
     _ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)
 
     # Fast-path: all files already exist
-    all_exist = _DATAFINER_SAMPLE_PATH.exists() and all(p.exists() for p in CORPUS_PATHS.values())
+    all_exist = (
+        _DATAFINER_SAMPLE_PATH.exists()
+        and all(p.exists() for p in CORPUS_PATHS.values())
+        and VIDEO_CATALOG_COMBINED_PATH.exists()
+        and all(p.exists() for p in VIDEO_CATALOG_PATHS.values())
+    )
     if all_exist and not force:
         logger.info("Using existing local sample datasets at %s", _ARTIFACT_ROOT)
         return _DATAFINER_SAMPLE_PATH
@@ -380,6 +439,24 @@ def prepare_local_sample(*, force: bool = False) -> Path:
         len(_CORPUS_SPECS),
         _ARTIFACT_ROOT,
     )
+
+    # ---- Generate video catalog Lance files --------------------------------
+    video_combined: list[dict[str, Any]] = []
+    video_offset = 0
+    for source, count in _VIDEO_CATALOG_SPECS:
+        video_rows = _build_video_catalog_rows(source, count, video_offset)
+        video_combined.extend(video_rows)
+        video_offset += count
+
+        catalog_path = VIDEO_CATALOG_PATHS[source]
+        _wipe_path(catalog_path)
+        daft.from_pylist(video_rows).write_lance(str(catalog_path), mode="overwrite")
+        logger.info("Wrote %d video catalog rows to %s", len(video_rows), catalog_path)
+
+    _wipe_path(VIDEO_CATALOG_COMBINED_PATH)
+    daft.from_pylist(video_combined).write_lance(str(VIDEO_CATALOG_COMBINED_PATH), mode="overwrite")
+    logger.info("Wrote %d total video catalog rows to %s", len(video_combined), VIDEO_CATALOG_COMBINED_PATH)
+
     return _DATAFINER_SAMPLE_PATH
 
 
