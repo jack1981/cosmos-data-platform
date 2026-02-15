@@ -17,6 +17,26 @@ services:
       timeout: 5s
       retries: 20
 
+  ray-head:
+    image: rayproject/ray:2.46.0-py311
+    command: >
+      ray start --head --port=6379
+      --ray-client-server-port=10001
+      --dashboard-host=0.0.0.0
+      --num-cpus=${RAY_HEAD_CPUS:-4}
+      --block
+    ports:
+      - "8265:8265"
+      - "6379:6379"
+      - "10001:10001"
+    shm_size: "2g"
+    healthcheck:
+      test: ["CMD", "ray", "status"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
   api:
     build:
       context: .
@@ -28,7 +48,7 @@ services:
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:-cuWRV_El44bUKXOBlIqg1uDM7mtgXAQQizK1tvkKF1c=}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:3000}
       RAY_MODE: ${RAY_MODE:-local}
-      RAY_ADDRESS: ${RAY_ADDRESS:-auto}
+      RAY_ADDRESS: ${RAY_ADDRESS:-}
       PIPELINEFORGE_DATASET_STORAGE_OPTIONS_JSON: ${PIPELINEFORGE_DATASET_STORAGE_OPTIONS_JSON:-}
       DEFAULT_ADMIN_EMAIL: ${DEFAULT_ADMIN_EMAIL:-admin@pipelineforge.local}
       DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-Admin123!}
@@ -36,8 +56,11 @@ services:
       DEFAULT_DEV_PASSWORD: ${DEFAULT_DEV_PASSWORD:-Dev123!}
       DEFAULT_AIOPS_EMAIL: ${DEFAULT_AIOPS_EMAIL:-aiops@pipelineforge.local}
       DEFAULT_AIOPS_PASSWORD: ${DEFAULT_AIOPS_PASSWORD:-Aiops123!}
+    shm_size: "4g"
     depends_on:
       postgres:
+        condition: service_healthy
+      ray-head:
         condition: service_healthy
     ports:
       - "8000:8000"

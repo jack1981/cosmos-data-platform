@@ -125,7 +125,16 @@ def _build_context(spec: PipelineSpecDocument) -> Any:
     daft_io_config = _build_daft_io_config(storage_options)
 
     ray_mode = spec.runtime.ray_mode or os.environ.get("RAY_MODE", "local")
-    ray_address = spec.runtime.ray_address or os.environ.get("RAY_ADDRESS")
+    # "auto" is not a real address — it means "discover automatically", which
+    # is already the fallback in _maybe_init_ray_and_daft.  Strip it so the
+    # init logic falls through to the correct ray_mode branch.
+    spec_ray_address = spec.runtime.ray_address
+    if spec_ray_address == "auto":
+        spec_ray_address = None
+    env_ray_address = os.environ.get("RAY_ADDRESS")
+    if env_ray_address == "auto":
+        env_ray_address = None
+    ray_address = spec_ray_address or env_ray_address
     work_dir = spec.runtime.work_dir or tempfile.mkdtemp(
         prefix=f"pipelineforge-dataset-{spec.pipeline_id or 'pipeline'}-"
     )
@@ -176,6 +185,14 @@ def _is_runner_already_configured_error(exc: Exception) -> bool:
 
 def _maybe_init_ray_and_daft(ctx: Any, log: Callable[[str], None]) -> None:
     with _RUNTIME_INIT_LOCK:
+        # Ray reads RAY_ADDRESS from the environment directly inside ray.init().
+        # If it is set to "auto" (a discovery sentinel, not a real address) and
+        # no local Ray instance exists, ray.init() will fail.  Clear it so that
+        # ray.init() either uses the address we pass explicitly or starts a
+        # fresh local instance.
+        if os.environ.get("RAY_ADDRESS") == "auto":
+            del os.environ["RAY_ADDRESS"]
+
         force_native_runner = _is_ray_client_address(ctx.ray_address)
 
         if force_native_runner:
@@ -214,7 +231,10 @@ def _maybe_init_ray_and_daft(ctx: Any, log: Callable[[str], None]) -> None:
 
             if callable(set_runner_ray):
                 try:
-                    if ctx.ray_address:
+                    # Only pass address to Daft if it's a ray:// client URL.
+                    # For GCS addresses (host:port), Ray is already initialized
+                    # above via ray.init(), so Daft should use it without args.
+                    if ctx.ray_address and _is_ray_client_address(ctx.ray_address):
                         set_runner_ray(ctx.ray_address)
                     else:
                         set_runner_ray()
