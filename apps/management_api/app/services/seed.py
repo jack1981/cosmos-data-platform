@@ -220,7 +220,7 @@ def _seed_template_specs() -> list[dict[str, Any]]:
         _stage_writer("template_video_incident_triage.jsonl"),
     ]
 
-    return [
+    video_templates = [
         {
             "external_id": "template_video_caption_batch",
             "name": "Template: Video Caption Batch",
@@ -351,6 +351,443 @@ def _seed_template_specs() -> list[dict[str, Any]]:
             ),
         },
     ]
+    return [*video_templates, *_seed_datafiner_template_specs()]
+
+
+def _datafiner_template_spec(
+    *,
+    pipeline_id: str,
+    name: str,
+    description: str,
+    stage_templates: list[tuple[str, str, str, dict[str, Any]]],
+    sink_path: str,
+) -> dict[str, Any]:
+    stages = [
+        {
+            "stage_id": stage_id,
+            "name": stage_name,
+            "stage_template": stage_template,
+            "resources": {"cpus": 1.0, "gpus": 0.0},
+            "batch_size": 1,
+            "concurrency_hint": 1,
+            "retries": 0,
+            "params": params,
+        }
+        for stage_id, stage_name, stage_template, params in stage_templates
+    ]
+
+    return {
+        "pipeline_id": pipeline_id,
+        "name": name,
+        "description": description,
+        "tags": ["template", "starter", "dataset", "datafiner", "compatibility"],
+        "owners": [],
+        "team_ids": [],
+        "data_model": "dataset",
+        "execution_mode": "batch",
+        "stages": stages,
+        "edges": _make_linear_edges([stage["stage_id"] for stage in stages]),
+        "io": {
+            "source": {"kind": "dataset_uri", "uri": "file:///tmp/pipelineforge_artifacts/datafiner_input.lance"},
+            "sink": {"kind": "artifact_uri", "uri": f"file://{_ARTIFACT_ROOT}/{sink_path}"},
+        },
+        "runtime": {"ray_mode": "local", "ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
+        "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
+        "metadata_links": {
+            "datasets": ["dataset://pipelineforge/datafiner-compatibility"],
+            "models": ["model://compatibility/fasttext", "model://compatibility/seq-classifier"],
+        },
+    }
+
+
+def _text_pretraining_curation_spec() -> dict[str, Any]:
+    """Build the DAG spec for the multi-source text pre-training curation
+    pipeline.  Five corpus readers fan-in to a concat stage, then flow
+    linearly through scoring, filtering, dedup, ranking, mixing, and sampling.
+    """
+
+    def _stage(
+        stage_id: str, name: str, template: str, params: dict[str, Any]
+    ) -> dict[str, Any]:
+        return {
+            "stage_id": stage_id,
+            "name": name,
+            "stage_template": template,
+            "resources": {"cpus": 1.0, "gpus": 0.0},
+            "batch_size": 1,
+            "concurrency_hint": 1,
+            "retries": 0,
+            "params": params,
+        }
+
+    # --- corpus readers (one per source Lance file) ---
+    corpus_names = [
+        ("dclm", "corpus_dclm"),
+        ("fineweb", "corpus_fineweb"),
+        ("fineweb-edu-zh", "corpus_fineweb_edu_zh"),
+        ("the-stack", "corpus_the_stack"),
+        ("megamath", "corpus_megamath"),
+    ]
+    reader_stage_ids: list[str] = []
+    reader_stages: list[dict[str, Any]] = []
+    for source_name, file_stem in corpus_names:
+        sid = f"reader_{file_stem}"
+        reader_stage_ids.append(sid)
+        reader_stages.append(
+            _stage(
+                sid,
+                f"Read {source_name}",
+                "builtin.datafiner_lance_reader",
+                {"uri": f"file://{_ARTIFACT_ROOT}/{file_stem}.lance"},
+            )
+        )
+
+    # --- concat + linear processing stages ---
+    processing_stages = [
+        _stage("concat", "Concat Corpora", "builtin.datafiner_concat", {}),
+        _stage(
+            "token_counter", "Token Counter", "builtin.datafiner_token_counter_v2",
+            {"text_column": "text", "output_column": "token_count"},
+        ),
+        _stage(
+            "length_filter", "Length Filter", "builtin.datafiner_filter",
+            {"predicate": "token_count >= 5"},
+        ),
+        _stage(
+            "quality_scorer", "Quality Scorer", "builtin.datafiner_fasttext_scorer",
+            {
+                "text_column": "text",
+                "score_column": "quality_score",
+                "label_column": "quality_label",
+                "labels": ["low_quality", "high_quality"],
+            },
+        ),
+        _stage(
+            "quality_filter", "Quality Filter", "builtin.datafiner_fasttext_filter",
+            {"score_column": "quality_score", "min_score": 0.4},
+        ),
+        _stage(
+            "domain_scorer", "Domain Scorer", "builtin.datafiner_seq_classifier_scorer",
+            {
+                "text_column": "text",
+                "labels": ["stem", "humanities", "social_science", "other"],
+                "output_prefix": "mmlu",
+            },
+        ),
+        _stage(
+            "dedup", "MinHash Dedup", "builtin.datafiner_minhash",
+            {"text_column": "text", "deduplicate": True, "num_hashes": 16, "shingle_size": 3},
+        ),
+        _stage(
+            "rank_quantile", "Rank Quantile", "builtin.datafiner_add_rank_quantile",
+            {
+                "score_column": "quality_score",
+                "quantiles": 10,
+                "rank_column": "quality_rank",
+                "quantile_column": "quality_quantile",
+            },
+        ),
+        _stage(
+            "interleave", "Balanced Mix", "builtin.datafiner_interleaved_reorder",
+            {"group_by": ["source"]},
+        ),
+        _stage(
+            "final_sample", "Final Sample", "builtin.datafiner_sampler",
+            {"fraction": 0.75, "seed": 42},
+        ),
+        _stage("writer", "Write Output", "builtin.datafiner_lance_writer", {}),
+    ]
+
+    all_stages = reader_stages + processing_stages
+
+    # --- edges: fan-in from readers to concat, then linear ---
+    edges: list[dict[str, str]] = []
+    for rid in reader_stage_ids:
+        edges.append({"source": rid, "target": "concat"})
+    linear_ids = [s["stage_id"] for s in processing_stages]
+    for i in range(len(linear_ids) - 1):
+        edges.append({"source": linear_ids[i], "target": linear_ids[i + 1]})
+
+    return {
+        "pipeline_id": "template_text_pretraining_curation",
+        "name": "Template: Text Pre-Training Dataset Curation",
+        "description": "5-source ingest + concat + token count + quality score/filter + domain classify + MinHash dedup + rank quantile + balanced mix + sample + write.",
+        "tags": ["template", "starter", "datafiner", "dataset", "pretraining", "curation", "ml"],
+        "owners": [],
+        "team_ids": [],
+        "data_model": "dataset",
+        "execution_mode": "batch",
+        "stages": all_stages,
+        "edges": edges,
+        "io": {
+            "source": {"kind": "dataset_uri", "uri": f"file://{_ARTIFACT_ROOT}/corpus_dclm.lance"},
+            "sink": {"kind": "artifact_uri", "uri": f"file://{_ARTIFACT_ROOT}/template_text_pretraining_curation.lance"},
+        },
+        "runtime": {"ray_mode": "local", "ray_address": "auto", "autoscaling": {}, "retry_policy": {}},
+        "observability": {"log_level": "INFO", "metrics_enabled": True, "tracing_enabled": False},
+        "metadata_links": {
+            "datasets": ["dataset://pipelineforge/datafiner-compatibility"],
+            "models": ["model://compatibility/fasttext", "model://compatibility/seq-classifier"],
+        },
+    }
+
+
+def _seed_datafiner_template_specs() -> list[dict[str, Any]]:
+    datafiner_templates: list[dict[str, Any]] = [
+        {
+            "external_id": "template_datafiner_read_write",
+            "name": "Template: Datafiner Read Write",
+            "description": "Minimal read->write dataset flow for compatibility validation.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "io"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_read_write",
+                name="Template: Datafiner Read Write",
+                description="Read and write Lance datasets.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_read_write.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_filter",
+            "name": "Template: Datafiner Filter",
+            "description": "Dataset filtering with ratio and predicate operators.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "filter"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_filter",
+                name="Template: Datafiner Filter",
+                description="Apply filter and filter-by-ratio operators.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("filter", "Filter", "builtin.datafiner_filter", {"predicate": "score >= 0.5"}),
+                    ("ratio", "FilterByRatio", "builtin.datafiner_filter_by_ratio", {"keep_ratio": 0.5, "seed": 7}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_filter.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_shuffle",
+            "name": "Template: Datafiner Shuffle",
+            "description": "Reorder and sample dataset records for curriculum mixing.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "ordering"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_shuffle",
+                name="Template: Datafiner Shuffle",
+                description="Reorder/interleave and sample records.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("reorder", "Reorder", "builtin.datafiner_reorder", {"by": ["source_id"]}),
+                    (
+                        "interleave",
+                        "InterleavedReorder",
+                        "builtin.datafiner_interleaved_reorder",
+                        {"group_by": ["source_id"]},
+                    ),
+                    ("sampler", "Sampler", "builtin.datafiner_sampler", {"fraction": 0.8, "seed": 11}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_shuffle.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_dedup",
+            "name": "Template: Datafiner Dedup",
+            "description": "MinHash and scoring based deduplication flow.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "dedup"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_dedup",
+                name="Template: Datafiner Dedup",
+                description="Deduplicate records with MinHash and score thresholds.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("minhash", "MinHash", "builtin.datafiner_minhash", {"text_column": "text", "deduplicate": True}),
+                    (
+                        "score",
+                        "FastTextScorer",
+                        "builtin.datafiner_fasttext_scorer",
+                        {"text_column": "text", "score_column": "fasttext_score"},
+                    ),
+                    (
+                        "filter",
+                        "FastTextFilter",
+                        "builtin.datafiner_fasttext_filter",
+                        {"score_column": "fasttext_score", "min_score": 0.35},
+                    ),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_dedup.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_group_reorder",
+            "name": "Template: Datafiner Group Reorder",
+            "description": "Grouping, flattening, and interleaving for balanced mixes.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "grouping"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_group_reorder",
+                name="Template: Datafiner Group Reorder",
+                description="Group flatten + interleaved reorder.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("group_flatten", "GroupFlatten", "builtin.datafiner_group_flatten", {"group_by": ["source_id"]}),
+                    (
+                        "interleave",
+                        "InterleavedReorder",
+                        "builtin.datafiner_interleaved_reorder",
+                        {"group_by": ["source_id"]},
+                    ),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_group_reorder.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_fasttext",
+            "name": "Template: Datafiner FastText",
+            "description": "FastText-style scoring and quantile enrichment.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "ml"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_fasttext",
+                name="Template: Datafiner FastText",
+                description="Score text and add rank quantiles.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("tokens", "TokenCounter_v2", "builtin.datafiner_token_counter_v2", {"text_column": "text"}),
+                    ("scorer", "FastTextScorer", "builtin.datafiner_fasttext_scorer", {"text_column": "text"}),
+                    (
+                        "rank",
+                        "AddRankQuantile",
+                        "builtin.datafiner_add_rank_quantile",
+                        {"score_column": "fasttext_score", "quantiles": 10},
+                    ),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_fasttext.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_seq_classifier",
+            "name": "Template: Datafiner Seq Classifier",
+            "description": "Sequence classifier style scoring flow.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "ml"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_seq_classifier",
+                name="Template: Datafiner Seq Classifier",
+                description="Generate sequence classifier labels and confidence.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    (
+                        "seq",
+                        "SeqClassifierScorer",
+                        "builtin.datafiner_seq_classifier_scorer",
+                        {"text_column": "text", "labels": ["negative", "neutral", "positive"]},
+                    ),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_seq_classifier.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_mmlu_fasttext",
+            "name": "Template: Datafiner MMLU FastText",
+            "description": "Compatibility template for MMLU-style fasttext ranking.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "mmlu", "ml"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_mmlu_fasttext",
+                name="Template: Datafiner MMLU FastText",
+                description="Score and sample top quantile records.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("scorer", "FastTextScorer", "builtin.datafiner_fasttext_scorer", {"text_column": "question"}),
+                    (
+                        "rank",
+                        "AddRankQuantile",
+                        "builtin.datafiner_add_rank_quantile",
+                        {"score_column": "fasttext_score", "quantiles": 4},
+                    ),
+                    ("selector", "Selector", "builtin.datafiner_selector", {"limit": 100}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_mmlu_fasttext.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_vis",
+            "name": "Template: Datafiner Visualizer",
+            "description": "Schema + statistics + visual preview compatibility flow.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "inspection"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_vis",
+                name="Template: Datafiner Visualizer",
+                description="Inspect schema/statistics and emit preview artifacts.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("schema", "Schema", "builtin.datafiner_schema", {}),
+                    ("stat", "Stat", "builtin.datafiner_stat", {}),
+                    ("visualizer", "Visualizer", "builtin.datafiner_visualizer", {"limit": 10}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_vis.lance",
+            ),
+        },
+        {
+            "external_id": "template_datafiner_sample",
+            "name": "Template: Datafiner Sample",
+            "description": "Sampling, duplication, and flatten operators in one flow.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "sampling"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _datafiner_template_spec(
+                pipeline_id="template_datafiner_sample",
+                name="Template: Datafiner Sample",
+                description="Sampler + duplicate ratio + flatten pipeline.",
+                stage_templates=[
+                    ("reader", "LanceReader", "builtin.datafiner_lance_reader", {}),
+                    ("sampler", "Sampler", "builtin.datafiner_sampler", {"fraction": 0.3, "seed": 17}),
+                    (
+                        "dup",
+                        "DuplicateSampleRatio",
+                        "builtin.datafiner_duplicate_sample_ratio",
+                        {"ratio": 1.5, "seed": 17},
+                    ),
+                    ("flatten", "Flatten", "builtin.datafiner_flatten", {"column": "items"}),
+                    ("writer", "LanceWriter", "builtin.datafiner_lance_writer", {}),
+                ],
+                sink_path="template_datafiner_sample.lance",
+            ),
+        },
+        {
+            "external_id": "template_text_pretraining_curation",
+            "name": "Template: Text Pre-Training Dataset Curation",
+            "description": "Multi-source text curation pipeline: 5-corpus ingest, concat, score, classify, deduplicate, bucket, mix, and sample.",
+            "execution_mode": "batch",
+            "tags": ["template", "starter", "datafiner", "dataset", "pretraining", "curation", "ml"],
+            "metadata_links": {"is_template": True, "source": "pipelineforge/datafiner-templates"},
+            "spec": _text_pretraining_curation_spec(),
+        },
+    ]
+    return datafiner_templates
 
 
 # ---------------------------------------------------------------------------
@@ -463,6 +900,14 @@ def seed_defaults(db: Session) -> None:
     default_team = _get_or_create_team(db, "platform-team", "Default shared team for local development")
     _ensure_team_member(db, default_team.id, dev_user.id)
     _ensure_team_member(db, default_team.id, aiops_user.id)
+
+    # Prepare the local sample Lance dataset that datafiner templates reference.
+    try:
+        from app.services.prepare_local_sample import prepare_local_sample
+
+        prepare_local_sample()
+    except Exception:
+        logger.warning("Could not prepare local sample dataset; datafiner pipelines may fail", exc_info=True)
 
     for template in _seed_template_specs():
         _ensure_template_pipeline(
